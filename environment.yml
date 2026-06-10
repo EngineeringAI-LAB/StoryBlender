@@ -145,9 +145,9 @@ dependencies:
       - py-rust-stemmers==0.1.5
       - pyasn1==0.6.1
       - pyasn1-modules==0.4.2
-      - pydantic==2.11.7
-      - pydantic-core==2.33.2
-      - pydantic-settings==2.10.1
+      - pydantic==2.12.5
+      - pydantic-core==2.41.5
+      - pydantic-settings==2.13.1
       - pydub==0.25.1
       - pygltflib==1.16.5
       - pyparsing==3.2.3
@@ -155,7 +155,7 @@ dependencies:
       - python-fcl==0.7.0.10
       - python-multipart==0.0.20
       - pytz==2025.2
-      - pyyaml==6.0.2
+      - pyyaml==6.0.3
       - referencing==0.36.2
       - regex==2025.9.1
       - requests==2.32.5

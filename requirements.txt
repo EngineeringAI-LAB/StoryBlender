@@ -100,9 +100,9 @@ pure_eval @ file:///home/conda/feedstock_root/build_artifacts/pure_eval_17335694
 py_rust_stemmers==0.1.5
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
-pydantic==2.11.7
-pydantic-settings==2.10.1
-pydantic_core==2.33.2
+pydantic==2.12.5
+pydantic-settings==2.13.1
+pydantic_core==2.41.5
 pydub==0.25.1
 pygltflib==1.16.5
 Pygments @ file:///home/conda/feedstock_root/build_artifacts/pygments_1750615794071/work
@@ -111,7 +111,7 @@ python-dateutil @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-
 python-dotenv==1.1.1
 python-multipart==0.0.20
 pytz==2025.2
-PyYAML==6.0.2
+PyYAML==6.0.3
 pyzmq @ file:///opt/miniconda3/conda-bld/pyzmq_1758103941054/work
 referencing==0.36.2
 regex==2025.9.1
