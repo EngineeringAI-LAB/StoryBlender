@@ -407,6 +407,7 @@ def create_layout_description_prompt(
 
         for asset in storyboard_script["asset_sheet"]:
             asset_id = asset.get("asset_id", "N/A")
+            asset_type = asset.get("asset_type")
             description = asset.get("description", "")
             width = asset.get("width")
             depth = asset.get("depth")
@@ -414,6 +415,8 @@ def create_layout_description_prompt(
             thumbnail_url = asset.get("thumbnail_url", "")
 
             md_text += f"## {asset_id}\n\n"
+            if asset_type:
+                md_text += f"asset_type: {asset_type}\n"
             md_text += f"{description}\n\n"
             md_text += f"width: {_format_dimension(width)}\n"
             md_text += f"depth: {_format_dimension(depth)}\n"
@@ -637,6 +640,10 @@ class SceneLayoutVerifier:
     OCCLUSION_TOL = 0.02
     DIRECTION_CONE_DEG = 45.0
     ON_TOP_Z_TOL = 0.05
+    # Extra breathing room (meters) added on each XY side of a character's
+    # bounding box to reserve space for animations that may extend beyond the
+    # rest pose (arms swinging, walking, etc.).
+    CHARACTER_XY_PADDING = 0.5
 
     def __init__(
         self,
@@ -660,9 +667,16 @@ class SceneLayoutVerifier:
             dims = self.asset_dims.get(aid)
             if dims is None:
                 continue
-            w, d, h = dims["w"], dims["d"], dims["h"]
+            w, d, h = dims.get("w"), dims.get("d"), dims.get("h")
+            if w is None or d is None or h is None:
+                continue
             if w <= 0 or d <= 0 or h <= 0:
                 continue
+            # Inflate XY bounding box for characters so animations
+            # (arm swings, walking, etc.) don't collide with neighbours.
+            if dims.get("type") == "character":
+                w = w + 2 * self.CHARACTER_XY_PADDING
+                d = d + 2 * self.CHARACTER_XY_PADDING
             box = trimesh.creation.box(extents=[w, d, h])
             loc = asset["location"]
             rot_z_rad = math.radians(asset["rotation"].get("z", 0))
@@ -712,12 +726,25 @@ class SceneLayoutVerifier:
         return (mesh.bounds[0][0], mesh.bounds[1][0],
                 mesh.bounds[0][1], mesh.bounds[1][1])
 
+    def _is_declared_contact_pair(self, a: str, b: str) -> bool:
+        """Return True if either asset declares the other as its anchor with contact=true."""
+        for x, y in ((a, b), (b, a)):
+            info = self._asset_lookup.get(x)
+            if info and info.get("anchor_asset_id") == y and info.get("contact") is True:
+                return True
+        return False
+
     def _check_occlusions(self) -> List[Dict[str, Any]]:
         errors = []
         aids = [a["asset_id"] for a in self.assets_data if a["asset_id"] in self._meshes]
         for i in range(len(aids)):
             for j in range(i + 1, len(aids)):
                 a, b = aids[i], aids[j]
+                # Declared contact pairs are allowed to overlap — especially
+                # important for characters whose padded bounding box may stick
+                # into an anchor they are touching on purpose.
+                if self._is_declared_contact_pair(a, b):
+                    continue
                 mgr = trimesh.collision.CollisionManager()
                 mgr.add_object("a", self._meshes[a])
                 mgr.add_object("b", self._meshes[b])
@@ -1267,12 +1294,13 @@ def verify_scene_layout(
     Returns:
         A list of error dicts.  Empty means all checks passed.
     """
-    asset_dims: Dict[str, Dict[str, float]] = {}
+    asset_dims: Dict[str, Dict[str, Any]] = {}
     for a in asset_sheet:
         asset_dims[a["asset_id"]] = {
             "w": a.get("width", 0),
             "d": a.get("depth", 0),
             "h": a.get("height", 0),
+            "type": a.get("asset_type"),
         }
     verifier = SceneLayoutVerifier(scene_layout, asset_dims, scene_id=scene_id)
     errors = verifier.verify_scene()
@@ -1431,7 +1459,13 @@ def _format_verification_errors_for_llm(errors: List[Dict[str, Any]]) -> str:
         "layout that serves the story and looks good on camera over mechanical "
         "precision. Only change the values that need fixing; keep everything "
         "else the same. For scenes with a reference scene, do NOT move static "
-        "objects (furniture, props) unless absolutely necessary to resolve an error.",
+        "objects (furniture, props) unless absolutely necessary to resolve an error. "
+        "**Reminder:** every asset whose `asset_type` is `character` must keep at "
+        "least 0.5 m of clearance on each horizontal side (+X, -X, +Y, -Y) from "
+        "any other asset's bounding box (except an anchor it is in declared "
+        "`contact: true` with). Occlusion errors involving a character usually "
+        "mean you need to move the character or its neighbour further apart so "
+        "that this 0.5 m breathing room is preserved for animation.",
         "",
     ]
 
@@ -1631,6 +1665,16 @@ When you set `direction` for an asset, you MUST ensure its `rotation.z` is consi
 * Assets that are `on_the_right_of` an anchor must have asset.x > anchor.x. Assets `behind` must have asset.y > anchor.y. The relationship is based on scene coordinates, NOT asset rotation.
 * Ensure no two assets physically overlap (bounding boxes must not intersect) unless one is `on_top_of` the other.
 
+**4a-bis. CHARACTER BREATHING ROOM (CRITICAL)**
+
+Characters (assets whose `asset_type` is `character`) will be animated later (walking, swinging arms, gesturing, turning, etc.), so their animated silhouette extends well beyond their rest-pose bounding box. When placing any asset whose `asset_type` is `character`:
+
+* Leave **at least 0.5 m of empty clearance** on every horizontal side (+X, -X, +Y, -Y) of the character's bounding box, measured from the edge of the character's bounding box to the nearest edge of any other asset's bounding box.
+* Equivalently, when separating a character from any neighbour asset along an axis, add an extra **0.5 m** on top of the usual `(character_dimension/2 + neighbour_dimension/2)` contact distance — and another 0.5 m if the neighbour is also a character (so two characters need ~1.0 m of clearance between their bounding boxes).
+* This applies even when `contact` is `true` (e.g. a character "next to" a chair): use the geometric contact formula for the non-character side but keep the 0.5 m breathing room on the character's other sides relative to unrelated assets.
+* The breathing room does **not** apply to the vertical axis (Z) — characters can still stand on the ground (`z=0`) normally.
+* Exception: the character's declared anchor in a direct-contact relationship (e.g. a character leaning on a door with `contact: true`) may touch the character's bounding box. All other unrelated assets must respect the 0.5 m clearance.
+
 **4b. TOLERANCE & CREATIVE FREEDOM**
 
 Your layout will be verified geometrically, but the verification uses generous tolerances. Treat the `direction` and `relationship` fields as **general cinematic guidance**, not rigid constraints:
@@ -1769,17 +1813,16 @@ Begin processing the inputs. Your output must be the complete JSON only.
         }
     ]
     
-    # Use longer timeout for reasoning models which can take 60+ seconds
-    client_args = {"http_options": {"timeout": 600000}}
 
     # Build asset_dims once for verification
     asset_sheet = single_scene_script.get("asset_sheet", [])
-    asset_dims: Dict[str, Dict[str, float]] = {}
+    asset_dims: Dict[str, Dict[str, Any]] = {}
     for a in asset_sheet:
         asset_dims[a["asset_id"]] = {
             "w": a.get("width", 0),
             "d": a.get("depth", 0),
             "h": a.get("height", 0),
+            "type": a.get("asset_type"),
         }
     shot_details = single_scene_script.get("shot_details", [])
 
@@ -1795,7 +1838,6 @@ Begin processing the inputs. Your output must be the complete JSON only.
                     reasoning_effort=reasoning_effort,
                     messages=messages,
                     response_format=response_schema,
-                    client_args=client_args
                 )
                 gc.collect()
                 result = json.loads(response.choices[0].message.content)

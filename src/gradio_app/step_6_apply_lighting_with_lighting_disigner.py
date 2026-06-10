@@ -328,6 +328,267 @@ def finish_lighting_design(project_dir, layout_data, current_filepath, lighting_
     }
 
 
+def apply_lighting_all_scenes_ai(blender_client, layout_data, lighting_applied, layout_script_editor, project_dir, anyllm_api_key=None, anyllm_api_base=None, anyllm_provider="gemini", vision_model="gemini-3-flash-preview", progress=gr.Progress(track_tqdm=False)):
+    """Apply AI-selected lighting to ALL scenes in sequence, then auto-finish.
+    
+    Yields intermediate status updates as each scene is processed.
+    Final yield includes all outputs needed to save and reinitialize.
+    """
+    if not layout_data:
+        yield (
+            gr.update(value="⚠️ Layout data not loaded. Please initialize first.", visible=True),
+            lighting_applied,
+            gr.update(),  # scene_buttons_row
+            gr.update(),  # lighting_config_row
+            gr.update(),  # apply_all_ai_btn
+        ) + layout_script_editor.update_with_result(None)
+        return
+    
+    # Ensure MCP server is running
+    success, message = blender_client.ensure_server_running()
+    if not success:
+        yield (
+            gr.update(value=f"⚠️ {message}", visible=True),
+            lighting_applied,
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        ) + layout_script_editor.update_with_result(None)
+        return
+    
+    scene_details = layout_data.get("scene_details", [])
+    num_scenes = len(scene_details)
+    new_lighting_applied = lighting_applied.copy() if lighting_applied else {}
+    
+    for idx, scene_detail in enumerate(scene_details):
+        scene_id = scene_detail.get("scene_id")
+        scene_setup = scene_detail.get("scene_setup", {})
+        scene_type = scene_setup.get("scene_type", "outdoor")
+        lighting_description = scene_setup.get("lighting_description", "")
+        categories_list = ["indoor"] if scene_type == "indoor" else ["pure skies"]
+        
+        progress((idx, num_scenes), desc=f"Scene {scene_id}")
+        
+        # Yield progress status
+        yield (
+            gr.update(value=f"⏳ Applying lighting to **Scene {scene_id}** ({idx + 1}/{num_scenes})...", visible=True),
+            new_lighting_applied,
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        ) + layout_script_editor.update_with_result(None)
+        
+        # Switch to the scene
+        scene_name = f"Scene_{scene_id}"
+        response = blender_client.switch_or_create_scene(scene_name=scene_name)
+        if response.get("status") == "error":
+            yield (
+                gr.update(value=f"⚠️ Failed to switch to Scene {scene_id}: {response.get('message', 'Unknown error')}. Skipping.", visible=True),
+                new_lighting_applied,
+                gr.update(),
+                gr.update(),
+                gr.update(),
+            ) + layout_script_editor.update_with_result(None)
+            continue
+        
+        # Apply lighting with AI (no manual asset_id)
+        response = blender_client.lighting_designer(
+            scene_description=lighting_description.strip() if lighting_description else None,
+            asset_id=None,
+            categories_limitation=categories_list,
+            anyllm_api_key=anyllm_api_key,
+            anyllm_api_base=anyllm_api_base,
+            anyllm_provider=anyllm_provider,
+            vision_model=vision_model,
+        )
+        
+        if response.get("status") == "error":
+            yield (
+                gr.update(value=f"⚠️ Lighting designer error for Scene {scene_id}: {response.get('message', 'Unknown error')}. Skipping.", visible=True),
+                new_lighting_applied,
+                gr.update(),
+                gr.update(),
+                gr.update(),
+            ) + layout_script_editor.update_with_result(None)
+            continue
+        
+        result = response.get("result", {})
+        if not result.get("success"):
+            yield (
+                gr.update(value=f"⚠️ Lighting failed for Scene {scene_id}: {result.get('error', 'Unknown')}. Skipping.", visible=True),
+                new_lighting_applied,
+                gr.update(),
+                gr.update(),
+                gr.update(),
+            ) + layout_script_editor.update_with_result(None)
+            continue
+        
+        applied_asset_id = result.get("asset_id", "")
+        new_lighting_applied[scene_id] = applied_asset_id
+    
+    progress((num_scenes, num_scenes), desc="Saving")
+    
+    # Auto-finish: save JSON and reinitialize
+    finish_result = finish_lighting_design(project_dir, layout_data, None, new_lighting_applied, layout_script_editor)
+    
+    if finish_result.get("error"):
+        yield (
+            gr.update(value=finish_result["error"], visible=True),
+            new_lighting_applied,
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        ) + layout_script_editor.update_with_result(None)
+        return
+    
+    # Build summary of applied lighting
+    summary_lines = []
+    for scene_detail in scene_details:
+        sid = scene_detail.get("scene_id")
+        aid = new_lighting_applied.get(sid, "❌ not applied")
+        summary_lines.append(f"- **Scene {sid}:** `{aid}`")
+    summary = "\n".join(summary_lines)
+    
+    warning = finish_result.get("warning", "")
+    if warning:
+        status_msg = f"{warning}\n\n{summary}\n\n✅ Layout script saved to: `{finish_result['output_path']}`"
+    else:
+        status_msg = f"✅ **Lighting applied to all {num_scenes} scene(s) with AI!**\n\n{summary}\n\nLayout script saved to: `{finish_result['output_path']}`"
+    
+    yield (
+        gr.update(value=status_msg, visible=True),
+        new_lighting_applied,
+        gr.update(visible=False),  # scene_buttons_row - hide
+        gr.update(visible=False),  # lighting_config_row - hide
+        gr.update(visible=False),  # apply_all_ai_btn - hide
+    ) + layout_script_editor.update_with_result(finish_result)
+
+
+def resume_lighting_all_scenes(blender_client, layout_data, lighting_applied, layout_script_editor, project_dir, progress=gr.Progress(track_tqdm=False)):
+    """Resume lighting for ALL scenes using `lighting_asset_id` already stored in the
+    layout script (bypasses AI selection). Effectively runs the same path as the
+    manual 'Asset ID' field, but iterates over every scene with one click.
+
+    Yields the same output tuple shape as `apply_lighting_all_scenes_ai`.
+    """
+    if not layout_data:
+        yield (
+            gr.update(value="⚠️ Layout data not loaded. Please initialize first.", visible=True),
+            lighting_applied,
+            gr.update(), gr.update(), gr.update(),
+        ) + layout_script_editor.update_with_result(None)
+        return
+
+    success, message = blender_client.ensure_server_running()
+    if not success:
+        yield (
+            gr.update(value=f"⚠️ {message}", visible=True),
+            lighting_applied,
+            gr.update(), gr.update(), gr.update(),
+        ) + layout_script_editor.update_with_result(None)
+        return
+
+    scene_details = layout_data.get("scene_details", [])
+    num_scenes = len(scene_details)
+    new_lighting_applied = lighting_applied.copy() if lighting_applied else {}
+    skipped = []
+
+    for idx, scene_detail in enumerate(scene_details):
+        scene_id = scene_detail.get("scene_id")
+        scene_setup = scene_detail.get("scene_setup", {})
+        scene_type = scene_setup.get("scene_type", "outdoor")
+        lighting_asset_id = (scene_setup.get("lighting_asset_id") or "").strip()
+        categories_list = ["indoor"] if scene_type == "indoor" else ["pure skies"]
+
+        progress((idx, num_scenes), desc=f"Scene {scene_id}")
+
+        if not lighting_asset_id:
+            skipped.append(scene_id)
+            yield (
+                gr.update(value=f"⚠️ Scene {scene_id} has no `lighting_asset_id` in layout JSON. Skipping.", visible=True),
+                new_lighting_applied,
+                gr.update(), gr.update(), gr.update(),
+            ) + layout_script_editor.update_with_result(None)
+            continue
+
+        yield (
+            gr.update(value=f"⏳ Resuming lighting for **Scene {scene_id}** ({idx + 1}/{num_scenes}) using asset `{lighting_asset_id}`...", visible=True),
+            new_lighting_applied,
+            gr.update(), gr.update(), gr.update(),
+        ) + layout_script_editor.update_with_result(None)
+
+        scene_name = f"Scene_{scene_id}"
+        response = blender_client.switch_or_create_scene(scene_name=scene_name)
+        if response.get("status") == "error":
+            yield (
+                gr.update(value=f"⚠️ Failed to switch to Scene {scene_id}: {response.get('message', 'Unknown error')}. Skipping.", visible=True),
+                new_lighting_applied,
+                gr.update(), gr.update(), gr.update(),
+            ) + layout_script_editor.update_with_result(None)
+            continue
+
+        # Apply with explicit asset_id (bypasses AI selection)
+        response = blender_client.lighting_designer(
+            scene_description=None,
+            asset_id=lighting_asset_id,
+            categories_limitation=categories_list,
+        )
+
+        if response.get("status") == "error":
+            yield (
+                gr.update(value=f"⚠️ Lighting designer error for Scene {scene_id}: {response.get('message', 'Unknown error')}. Skipping.", visible=True),
+                new_lighting_applied,
+                gr.update(), gr.update(), gr.update(),
+            ) + layout_script_editor.update_with_result(None)
+            continue
+
+        result = response.get("result", {})
+        if not result.get("success"):
+            yield (
+                gr.update(value=f"⚠️ Lighting failed for Scene {scene_id}: {result.get('error', 'Unknown')}. Skipping.", visible=True),
+                new_lighting_applied,
+                gr.update(), gr.update(), gr.update(),
+            ) + layout_script_editor.update_with_result(None)
+            continue
+
+        applied_asset_id = result.get("asset_id", lighting_asset_id)
+        new_lighting_applied[scene_id] = applied_asset_id
+
+    progress((num_scenes, num_scenes), desc="Saving")
+
+    finish_result = finish_lighting_design(project_dir, layout_data, None, new_lighting_applied, layout_script_editor)
+
+    if finish_result.get("error"):
+        yield (
+            gr.update(value=finish_result["error"], visible=True),
+            new_lighting_applied,
+            gr.update(), gr.update(), gr.update(),
+        ) + layout_script_editor.update_with_result(None)
+        return
+
+    summary_lines = []
+    for scene_detail in scene_details:
+        sid = scene_detail.get("scene_id")
+        aid = new_lighting_applied.get(sid, "❌ not applied")
+        summary_lines.append(f"- **Scene {sid}:** `{aid}`")
+    summary = "\n".join(summary_lines)
+
+    header = f"✅ **Resumed lighting for {num_scenes - len(skipped)}/{num_scenes} scene(s) from layout JSON.**"
+    if skipped:
+        header += f"\n\n⚠️ Skipped scenes (no `lighting_asset_id`): {', '.join(str(s) for s in skipped)}"
+    warning = finish_result.get("warning", "")
+    extra = f"\n\n{warning}" if warning else ""
+    status_msg = f"{header}{extra}\n\n{summary}\n\nLayout script saved to: `{finish_result['output_path']}`"
+
+    yield (
+        gr.update(value=status_msg, visible=True),
+        new_lighting_applied,
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=False),
+    ) + layout_script_editor.update_with_result(finish_result)
+
+
 def create_scene_button_click_handler(blender_client, scene_id):
     """Create a click handler for a specific scene button."""
     def handler(layout_data):
@@ -380,6 +641,19 @@ def create_lighting_designer_ui(project_dir, blender_client, anyllm_api_key=None
     # Status indicator
     lighting_status = gr.Markdown(value="", visible=False)
     
+    # Batch buttons (hidden initially)
+    with gr.Row(visible=False) as batch_buttons_row:
+        apply_all_ai_btn = gr.Button(
+            "🤖 Apply Lighting to All Scenes with AI",
+            variant="primary", size="lg",
+        )
+        resume_all_btn = gr.Button(
+            "♻️ Resume Lighting for All Scenes",
+            variant="secondary", size="lg",
+        )
+    
+    gr.Markdown("*Or select a scene below to manually configure lighting:*", visible=True)
+    
     # Scene buttons row (hidden initially)
     with gr.Row(visible=False) as scene_buttons_row:
         # Create buttons for up to 10 scenes (can be extended if needed)
@@ -425,14 +699,16 @@ def create_lighting_designer_ui(project_dir, blender_client, anyllm_api_key=None
         
         # Update scene button visibility based on number of scenes
         button_updates = []
+        show_ai_btn = False
         if layout_data:
             num_scenes = len(layout_data.get("scene_details", []))
+            show_ai_btn = num_scenes > 0
             for i in range(10):
                 button_updates.append(gr.update(visible=(i < num_scenes)))
         else:
             button_updates = [gr.update(visible=False) for _ in range(10)]
         
-        return (status_update, scene_row_update, layout_data, filepath, lighting_applied) + tuple(button_updates)
+        return (status_update, scene_row_update, layout_data, filepath, lighting_applied, gr.update(visible=show_ai_btn)) + tuple(button_updates)
     
     initialize_btn.click(
         fn=init_handler,
@@ -443,6 +719,7 @@ def create_lighting_designer_ui(project_dir, blender_client, anyllm_api_key=None
             layout_data_state,
             current_filepath_state,
             lighting_applied_state,
+            batch_buttons_row,
         ] + scene_buttons,
         concurrency_limit=None,
         show_progress="hidden",
@@ -512,6 +789,7 @@ def create_lighting_designer_ui(project_dir, blender_client, anyllm_api_key=None
                 gr.update(value=result["error"], visible=True),  # lighting_status
                 gr.update(),  # scene_buttons_row - no change
                 gr.update(),  # lighting_config_row - no change
+                gr.update(),  # apply_all_ai_btn - no change
             ) + layout_script_editor.update_with_result(None)
         
         # Success - hide scene buttons and config, show JSON editor with saved file
@@ -525,6 +803,7 @@ def create_lighting_designer_ui(project_dir, blender_client, anyllm_api_key=None
             gr.update(value=status_msg, visible=True),  # lighting_status
             gr.update(visible=False),  # scene_buttons_row - hide
             gr.update(visible=False),  # lighting_config_row - hide
+            gr.update(visible=False),  # apply_all_ai_btn - hide
         ) + layout_script_editor.update_with_result(result)
     
     finish_btn.click(
@@ -539,7 +818,66 @@ def create_lighting_designer_ui(project_dir, blender_client, anyllm_api_key=None
             lighting_status,
             scene_buttons_row,
             lighting_config_row,
+            batch_buttons_row,
         ] + layout_script_editor.get_output_components(),
+    )
+    
+    # Apply All Scenes with AI button handler
+    def apply_all_ai_handler(layout_data, lighting_applied, proj_dir, api_key, api_base, provider, v_model, progress=gr.Progress(track_tqdm=False)):
+        yield from apply_lighting_all_scenes_ai(
+            blender_client, layout_data, lighting_applied, layout_script_editor, proj_dir,
+            anyllm_api_key=api_key,
+            anyllm_api_base=api_base,
+            anyllm_provider=provider,
+            vision_model=v_model,
+            progress=progress,
+        )
+    
+    apply_all_ai_btn.click(
+        fn=apply_all_ai_handler,
+        inputs=[
+            layout_data_state,
+            lighting_applied_state,
+            project_dir,
+            anyllm_api_key,
+            anyllm_api_base,
+            anyllm_provider,
+            vision_model,
+        ],
+        outputs=[
+            lighting_status,
+            lighting_applied_state,
+            scene_buttons_row,
+            lighting_config_row,
+            batch_buttons_row,
+        ] + layout_script_editor.get_output_components(),
+        concurrency_limit=None,
+        show_progress="full",
+    )
+    
+    # Resume Lighting for All Scenes button handler
+    def resume_all_handler(layout_data, lighting_applied, proj_dir, progress=gr.Progress(track_tqdm=False)):
+        yield from resume_lighting_all_scenes(
+            blender_client, layout_data, lighting_applied, layout_script_editor, proj_dir,
+            progress=progress,
+        )
+    
+    resume_all_btn.click(
+        fn=resume_all_handler,
+        inputs=[
+            layout_data_state,
+            lighting_applied_state,
+            project_dir,
+        ],
+        outputs=[
+            lighting_status,
+            lighting_applied_state,
+            scene_buttons_row,
+            lighting_config_row,
+            batch_buttons_row,
+        ] + layout_script_editor.get_output_components(),
+        concurrency_limit=None,
+        show_progress="full",
     )
     
     return {

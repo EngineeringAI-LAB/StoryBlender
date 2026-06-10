@@ -1,5 +1,6 @@
 """Animation selection using LLM to match story actions to animations from a database."""
 
+import math
 import os
 import io
 import time
@@ -38,6 +39,11 @@ try:
 except ImportError:
     from restore_texture import restore_textures
 
+try:
+    from .rigging import ensure_valid_rig_task, is_rig_task_valid, MeshyRiggingAPIError
+except ImportError:
+    from rigging import ensure_valid_rig_task, is_rig_task_valid, MeshyRiggingAPIError
+
 warnings.filterwarnings("ignore", category=UserWarning, module="moviepy")
 
 # Get the directory where this script is located
@@ -62,6 +68,7 @@ class CandidateSelection(BaseModel):
 class FinalAnimationSelection(BaseModel):
     """Schema for final animation selection output."""
     selected_animation: str
+    matched: bool
 
 
 class GenderSelection(BaseModel):
@@ -358,7 +365,6 @@ If there are fewer than {num_candidates} animations available, select all of the
                 model=vision_model,
                 messages=messages,
                 response_format=CandidateSelection,
-                client_args={"http_options": {"timeout": 60000}}
             )
             gc.collect()
             # Handle generator response in threaded context
@@ -393,7 +399,7 @@ def select_final_animation(
     anyllm_provider: str = "gemini",
     vision_model: str = "gemini-2.5-flash",
     max_retries: int = 3
-) -> Optional[str]:
+) -> Optional[Tuple[str, bool]]:
     """Select the final animation by analyzing GIF previews.
     
     Args:
@@ -408,7 +414,8 @@ def select_final_animation(
         max_retries: Maximum retry attempts.
         
     Returns:
-        Selected animation name, or None if failed.
+        Tuple of (selected animation name, matched), or None if failed.
+        matched is True if the animation genuinely fits the action, False if it is a fallback (e.g. Idle).
     """
     system_prompt = """You are an expert at analyzing animations for character actions.
 You will see preview videos of candidate animations. Select the ONE that best matches the character and action description.
@@ -418,7 +425,11 @@ Prefer simple, concise actions than complex actions. Then actions you selected s
 Special Rules (even they are not in the candidate animations):
 - For walking actions, always choose "walking_2".
 - For running actions, always choose "Run_03".
-- If there are no suitable animations, use "Idle_3" for female character, "Idle_02" for male character as the selected animation.
+- If there are no suitable animations, use "Idle_12" for female character, "Idle_11" for male character as the selected animation.
+
+For the `matched` field:
+- Set matched=true if the selected animation genuinely matches the action description.
+- Set matched=false if you are falling back to an Idle animation (Idle_11 or Idle_12) because no suitable animation was found.
 Your output must be valid JSON with the selected animation name exactly as provided."""
 
     # Build multimodal content with GIF videos
@@ -473,7 +484,6 @@ Your output must be valid JSON with the selected animation name exactly as provi
                 model=vision_model,
                 messages=messages,
                 response_format=FinalAnimationSelection,
-                client_args={"http_options": {"timeout": 120000}}
             )
             gc.collect()
             # Handle generator response in threaded context
@@ -483,11 +493,12 @@ Your output must be valid JSON with the selected animation name exactly as provi
                     response = chunks[-1]
             result = json.loads(response.choices[0].message.content)
             selected = result.get("selected_animation", "")
+            matched = bool(result.get("matched", True))
             
             # Validate the selection (includes special-rule overrides from system prompt)
-            allowed_overrides = {"Idle_3", "Idle_02", "walking_2", "Run_03"}
+            allowed_overrides = {"Idle_11", "Idle_12", "walking_2", "Run_03"}
             if selected in candidate_names or selected in allowed_overrides:
-                return selected
+                return selected, matched
             else:
                 print(f"Invalid selection '{selected}' (attempt {attempt + 1}/{max_retries})")
                 
@@ -555,7 +566,8 @@ def select_animation_for_action(
         anim = animations_in_category[0]
         return {
             "action_id": anim.get("ID"),
-            "action_name": anim.get("Name")
+            "action_name": anim.get("Name"),
+            "matched": True
         }
     
     candidate_names = select_candidates(
@@ -580,7 +592,8 @@ def select_animation_for_action(
         if anim:
             return {
                 "action_id": anim.get("ID"),
-                "action_name": anim.get("Name")
+                "action_name": anim.get("Name"),
+                "matched": True
             }
         return None
     
@@ -591,7 +604,7 @@ def select_animation_for_action(
         if database.get_animation_by_name(name)
     ]
     
-    final_name = select_final_animation(
+    final_result = select_final_animation(
         action_description=action_description,
         candidates=candidate_animations,
         asset_id=asset_id,
@@ -603,16 +616,20 @@ def select_animation_for_action(
         max_retries=max_retries
     )
     
-    if not final_name:
+    if final_result:
+        final_name, matched = final_result
+    else:
         # Fallback to first candidate if visual selection fails
         print("Visual selection failed, using first candidate as fallback")
         final_name = candidate_names[0]
+        matched = final_name not in {"Idle_11", "Idle_12"}
     
     final_anim = database.get_animation_by_name(final_name)
     if final_anim:
         return {
             "action_id": final_anim.get("ID"),
-            "action_name": final_anim.get("Name")
+            "action_name": final_anim.get("Name"),
+            "matched": matched
         }
     
     return None
@@ -667,7 +684,6 @@ You must choose exactly one: "male" or "female"."""
                 model=vision_model,
                 messages=messages,
                 response_format=GenderSelection,
-                client_args={"http_options": {"timeout": 60000}}
             )
             gc.collect()
             # Handle generator response in threaded context
@@ -901,10 +917,12 @@ def generate_animation_selection(
             if cache_key in action_cache:
                 action["action_id"] = action_cache[cache_key]["action_id"]
                 action["action_name"] = action_cache[cache_key]["action_name"]
+                action["matched"] = action_cache[cache_key].get("matched", True)
                 applied_count += 1
             else:
                 action["action_id"] = None
                 action["action_name"] = None
+                action["matched"] = False
     
     print(f"\nCompleted animation selection: {len(action_cache)}/{total_unique} unique (asset_id, action) pairs resolved, applied to {applied_count} character_actions")
     
@@ -962,13 +980,13 @@ def generate_animation_selection(
                 print(f"  Determined gender for '{asset_id}': {gender}")
             
             # Apply idle animation based on gender
-            # Male: Idle_02 (id 11), Female: Idle_3 (id 243)
+            # Male: Idle_11 (id 251), Female: Idle_12 (id 252)
             if gender == "female":
-                action_id = 243
-                action_name = "Idle_3"
+                action_id = 252
+                action_name = "Idle_12"
             else:
-                action_id = 11
-                action_name = "Idle_02"
+                action_id = 251
+                action_name = "Idle_11"
             
             # Create idle action entry
             idle_action = {
@@ -976,6 +994,7 @@ def generate_animation_selection(
                 "action_description": "idle (default action)",
                 "action_id": action_id,
                 "action_name": action_name,
+                "matched": False,
             }
             
             # Add to character_actions
@@ -1266,6 +1285,55 @@ def animate_rigged_model(
     shot_details = input_data.get("shot_details", [])
     asset_sheet = input_data.get("asset_sheet", [])
     
+    # Determine which character assets are referenced by any character_action
+    referenced_character_asset_ids = set()
+    for shot in shot_details:
+        for action in shot.get("character_actions", []) or []:
+            aid = action.get("asset_id")
+            if aid:
+                referenced_character_asset_ids.add(aid)
+    
+    # Validate / refresh rig tasks for referenced character assets BEFORE animating.
+    # If a rig_task_id is missing or expired (per Meshy API), re-rig the model
+    # so animation calls don't fail. The rigged_models output_dir is derived
+    # from the input json's directory to keep artifacts grouped.
+    rigged_models_output_dir = os.path.join(os.path.dirname(path_to_input_json), "rigged_models")
+    rigging_session = requests.Session()
+    asset_sheet_changed = False
+    for idx, asset in enumerate(asset_sheet):
+        asset_id = asset.get("asset_id")
+        if not asset_id or asset_id not in referenced_character_asset_ids:
+            continue
+        if asset.get("asset_type") and asset.get("asset_type") != "character":
+            continue
+        if not asset.get("main_file_path"):
+            # Cannot re-rig without a source model; skip silently — it will
+            # surface later as a missing rig_task_id warning.
+            continue
+        try:
+            refreshed = ensure_valid_rig_task(
+                asset,
+                output_dir=rigged_models_output_dir,
+                meshy_api_key=key,
+                meshy_api_base=meshy_api_base,
+                session=rigging_session,
+            )
+        except MeshyRiggingAPIError as e:
+            print(f"Warning: failed to (re-)rig {asset_id}: {e}")
+            continue
+        if refreshed is not asset:
+            asset_sheet[idx] = refreshed
+            asset_sheet_changed = True
+    
+    if asset_sheet_changed:
+        input_data["asset_sheet"] = asset_sheet
+        try:
+            with open(path_to_input_json, "w") as _f:
+                json.dump(input_data, _f, indent=2)
+            print(f"Persisted refreshed rigging info back to {path_to_input_json}")
+        except Exception as _e:
+            print(f"Warning: failed to persist refreshed rigging info to {path_to_input_json}: {_e}")
+    
     # Build asset_id to rig_task_id mapping from asset_sheet
     rig_task_map = {}
     texture_folder_map = {}
@@ -1428,3 +1496,386 @@ def animate_rigged_model(
         "total_processed": total_processed,
         "updated_json": updated_json,
     }
+
+
+# ---------------------------------------------------------------------------
+# GLB duration extraction
+# ---------------------------------------------------------------------------
+
+def glb_duration_seconds(glb_path: str) -> Optional[float]:
+    """Extract the animation duration in seconds from a GLB file.
+
+    Reads the glTF animation sampler input accessors (timestamps) and returns
+    the maximum timestamp across all samplers.  Returns ``None`` on error.
+    """
+    try:
+        import numpy as np
+        from pygltflib import GLTF2
+
+        gltf = GLTF2.load(glb_path)
+        blob = gltf.binary_blob()
+        if blob is None or not gltf.animations:
+            return None
+
+        max_t = 0.0
+        for anim in gltf.animations:
+            for sampler in anim.samplers:
+                acc = gltf.accessors[sampler.input]
+                bv = gltf.bufferViews[acc.bufferView]
+                ts = np.frombuffer(
+                    blob[bv.byteOffset : bv.byteOffset + bv.byteLength],
+                    dtype=np.float32,
+                )
+                if len(ts) > 0:
+                    max_t = max(max_t, float(ts[-1]))
+        return max_t if max_t > 0 else None
+    except Exception as e:
+        print(f"Warning: could not read duration from {glb_path}: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Movement categories (Walking / Running animations involve root motion)
+# ---------------------------------------------------------------------------
+
+_MOVEMENT_CATEGORIES = {"Walking", "Running", "CrouchWalking"}
+
+
+def _is_movement_animation(action_name: str, csv_path: str = DEFAULT_ANIMATION_CSV) -> bool:
+    """Return True if *action_name* belongs to a movement category."""
+    try:
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("Name") == action_name:
+                    return row.get("Category", "") in _MOVEMENT_CATEGORIES
+    except Exception:
+        pass
+    # Fallback: check by name substring
+    lower = action_name.lower()
+    return any(kw in lower for kw in ("walk", "run", "jog", "sprint", "crouch_walk"))
+
+
+# ---------------------------------------------------------------------------
+# LLM-based movement planner for Meshy animations
+# ---------------------------------------------------------------------------
+
+class _Coords3(BaseModel):
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+class _Rot3(BaseModel):
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+class _MeshyMovementCoords(BaseModel):
+    """Schema for LLM output: start/end coords + rotation for one character."""
+    asset_id: str
+    start_coords: Optional[_Coords3] = None
+    end_coords: Optional[_Coords3] = None
+    start_rotation: Optional[_Rot3] = None
+
+
+class _ShotMovementPlan(BaseModel):
+    shot_id: int
+    movements: List[_MeshyMovementCoords]
+
+
+class _SceneMovementPlan(BaseModel):
+    shots: List[_ShotMovementPlan]
+
+
+_MOVEMENT_SYSTEM_PROMPT = """You are a Movement Planner for a 3D storyboard system.
+
+You are given character layout positions and their animation details (animation name, duration).
+For characters with **walking or running animations**, compute where they should end up.
+
+**OUTPUT per moving character per shot:**
+- `start_coords`: {x, y, z} or null.
+  - For Shot 1: null means use layout position.
+  - For Shot 2+: if the character moved (had end_coords) in a previous shot, set start_coords to that previous end position to maintain continuity. Only use null if the character has not moved from its layout position in any prior shot.
+- `end_coords`: {x, y, z} — the world position the character reaches after walking/running.
+  Compute from the **effective start position** + movement direction based on action_description.
+  Use the coordinate system: +X=right, +Y=back, +Z=up.
+- `start_rotation`: {x, y, z} degrees — set rotation_z so the character faces the movement direction.
+  Formula: rotation_z = atan2(end_x - start_x, -(end_y - start_y)) in degrees.
+  Keep x=0, y=0. Set to null only if the current rotation already faces the movement direction (within ±45°).
+
+**CROSS-SHOT CONTINUITY:**
+- Shots are sequential. If a character walks to end_coords in Shot N, Shot N+1 must set start_coords to that position.
+- Idle characters that didn't move in prior shots: start_coords = null (uses layout).
+
+**RULES:**
+- Only output entries for characters that have walking/running/crouching animations.
+- Characters with idle or non-locomotion animations should NOT appear in the output.
+- Forward vector at rotation_z = R is: (sin(R), -cos(R)).
+- rotation_z = 0 → faces -Y (toward camera), 90 → faces +X, 180 → faces +Y, -90 → faces -X.
+- Output ONLY the JSON. No explanations.
+"""
+
+
+def _heading_from_to(sx: float, sy: float, ex: float, ey: float) -> float:
+    dx = ex - sx
+    dy = ey - sy
+    return math.degrees(math.atan2(dx, -dy))
+
+
+def _angle_between(a: float, b: float) -> float:
+    d = (a - b) % 360
+    if d > 180:
+        d -= 360
+    return abs(d)
+
+
+def _verify_meshy_movement(plan: dict, layout_coords: Dict[str, dict]) -> List[Dict[str, Any]]:
+    """Geometric check: movement direction must match facing + cross-shot continuity."""
+    errors = []
+    sorted_shots = sorted(plan.get("shots", []), key=lambda s: s["shot_id"])
+    prev_end: Dict[str, dict] = {}  # asset_id → {"x", "y"}
+
+    for sp in sorted_shots:
+        sid = sp["shot_id"]
+        for mv in sp.get("movements", []):
+            aid = mv["asset_id"]
+            lc = layout_coords.get(aid, {})
+            ec = mv.get("end_coords")
+            sc = mv.get("start_coords")
+
+            # Resolve effective start
+            if sc:
+                sx, sy = sc["x"], sc["y"]
+            elif aid in prev_end:
+                sx, sy = prev_end[aid]["x"], prev_end[aid]["y"]
+            else:
+                sx, sy = lc.get("x", 0), lc.get("y", 0)
+
+            # Continuity check
+            if aid in prev_end and sc is None:
+                pe = prev_end[aid]
+                gap = math.hypot(lc.get("x", 0) - pe["x"], lc.get("y", 0) - pe["y"])
+                if gap > 0.1:
+                    errors.append({
+                        "shot_id": sid, "asset_id": aid,
+                        "error_type": "continuity_break",
+                        "detail": f"Ended at ({pe['x']:.1f},{pe['y']:.1f}) in prev shot but start_coords is null (layout={lc.get('x',0):.1f},{lc.get('y',0):.1f}, gap={gap:.1f})",
+                        "fix": f"Set start_coords to {{\"x\":{pe['x']:.2f},\"y\":{pe['y']:.2f},\"z\":0}}",
+                    })
+
+            # Direction check
+            if ec:
+                ex, ey = ec["x"], ec["y"]
+                dist = math.hypot(ex - sx, ey - sy)
+                if dist > 0.05:
+                    required_z = _heading_from_to(sx, sy, ex, ey)
+                    sr = mv.get("start_rotation")
+                    facing_z = sr["z"] if sr else lc.get("rotation_z", 0)
+                    dev = _angle_between(facing_z, required_z)
+                    if dev > 45:
+                        errors.append({
+                            "shot_id": sid, "asset_id": aid,
+                            "error_type": "movement_direction_mismatch",
+                            "detail": f"Moves ({sx:.1f},{sy:.1f})→({ex:.1f},{ey:.1f}) heading={required_z:.0f}° but faces {facing_z:.0f}° (dev={dev:.0f}°)",
+                            "fix": f"Set start_rotation to {{\"x\":0,\"y\":0,\"z\":{required_z:.1f}}}",
+                        })
+
+            # Track end for continuity
+            if ec:
+                prev_end[aid] = {"x": ec["x"], "y": ec["y"]}
+            else:
+                prev_end[aid] = {"x": sx, "y": sy}
+
+    return errors
+
+
+def _format_movement_errors(errors):
+    if not errors:
+        return ""
+    lines = ["# Movement Verification Errors", "",
+             "Fix ALL errors. Re-output the full corrected JSON.", ""]
+    for e in errors:
+        lines.append(f"- **Shot {e['shot_id']} / {e['asset_id']}** [{e['error_type']}]: {e['detail']}")
+        if e.get("fix"):
+            lines.append(f"  **FIX**: {e['fix']}")
+    lines.append("\nOutput only the corrected JSON.")
+    return "\n".join(lines)
+
+
+def plan_movement_for_meshy_animations(
+    storyboard_script: Dict[str, Any],
+    anyllm_api_key: str = None,
+    anyllm_api_base: str = None,
+    anyllm_provider: str = "gemini",
+    vision_model: str = "gemini-3-flash-preview",
+    max_retries: int = 3,
+    max_improvement_turns: int = 3,
+) -> Dict[str, Any]:
+    """Plan start_coords / end_coords / start_rotation for Meshy walking/running
+    animations and also extract animation duration from downloaded GLBs.
+
+    This function should be called after ``animate_rigged_model`` has populated
+    ``animated_path`` on each character_action.  It:
+
+    1. Reads each ``animated_path`` GLB to extract the animation duration.
+    2. Identifies walking/running animations via the Meshy CSV category.
+    3. For shots containing movement animations, calls the LLM to plan
+       ``end_coords`` and ``start_rotation``, then verifies geometrically.
+    4. Returns an updated deep copy of *storyboard_script*.
+    """
+    result = deepcopy(storyboard_script)
+    shot_details = result.get("shot_details", [])
+    scene_details = result.get("scene_details", [])
+
+    # --- Phase 1: Extract durations from animated GLBs ---
+    print("\n=== Meshy movement planner: extracting animation durations ===")
+    for shot in shot_details:
+        for action in shot.get("character_actions", []):
+            apath = action.get("animated_path")
+            if apath and os.path.exists(apath):
+                dur = glb_duration_seconds(apath)
+                if dur is not None:
+                    action["duration"] = round(dur, 3)
+                    print(f"  {action.get('asset_id')} / {action.get('action_name')}: {dur:.3f}s")
+
+    # --- Build layout_coords per scene ---
+    layout_by_scene: Dict[int, Dict[str, dict]] = {}
+    for sd in scene_details:
+        sid = sd.get("scene_id")
+        layout = sd.get("scene_setup", {}).get("layout_description", {})
+        coords = {}
+        for a in layout.get("assets", []):
+            loc = a.get("location", {})
+            rot = a.get("rotation", {})
+            coords[a["asset_id"]] = {
+                "x": loc.get("x", 0), "y": loc.get("y", 0), "z": loc.get("z", 0),
+                "rotation_z": rot.get("z", 0),
+            }
+        layout_by_scene[sid] = coords
+
+    # --- Phase 2: Identify movement actions, group by scene ---
+    scenes_needing_plan: Dict[int, List[dict]] = {}  # scene_id → list of shot dicts
+    for shot in shot_details:
+        sid = shot.get("scene_id")
+        has_movement = False
+        for action in shot.get("character_actions", []):
+            aname = action.get("action_name", "")
+            if aname and _is_movement_animation(aname):
+                action["_is_movement"] = True
+                has_movement = True
+        if has_movement:
+            scenes_needing_plan.setdefault(sid, []).append(shot)
+
+    if not scenes_needing_plan:
+        print("No walking/running animations found — skipping movement planning")
+        return result
+
+    # --- Phase 3: LLM call per scene (with verify → correct loop) ---
+    print(f"\n=== Planning movement for {sum(len(v) for v in scenes_needing_plan.values())} shots across {len(scenes_needing_plan)} scenes ===")
+
+    for scene_id, shots in scenes_needing_plan.items():
+        layout_coords = layout_by_scene.get(scene_id, {})
+        storyboard_outline = storyboard_script.get("storyboard_outline", [])
+        scene_desc = ""
+        for so in storyboard_outline:
+            if so.get("scene_id") == scene_id:
+                scene_desc = so.get("scene_description", "")
+                break
+
+        # Build user prompt
+        prompt_parts = [f"## Scene {scene_id}", f"**Description:** {scene_desc}", ""]
+        prompt_parts.append("## Character Positions (from layout)")
+        for aid, lc in layout_coords.items():
+            prompt_parts.append(f"- **{aid}**: x={lc['x']}, y={lc['y']}, z={lc['z']}, rotation_z={lc['rotation_z']}")
+        prompt_parts.append("")
+        prompt_parts.append("## Shots with Walking/Running Animations")
+        for shot in shots:
+            shot_id = shot.get("shot_id")
+            prompt_parts.append(f"### Shot {shot_id}")
+            for action in shot.get("character_actions", []):
+                if action.get("_is_movement"):
+                    dur = action.get("duration", "?")
+                    prompt_parts.append(
+                        f"- **{action['asset_id']}**: animation=\"{action.get('action_name')}\", "
+                        f"duration={dur}s, action_description=\"{action.get('action_description', '')}\""
+                    )
+            prompt_parts.append("")
+        prompt_parts.append("Plan end_coords and start_rotation for ONLY the walking/running characters listed above.")
+
+        messages = [
+            {"role": "system", "content": _MOVEMENT_SYSTEM_PROMPT},
+            {"role": "user", "content": [{"type": "text", "text": "\n".join(prompt_parts)}]},
+        ]
+
+        # LLM call with retry
+        def _call(label):
+            for attempt in range(max_retries):
+                try:
+                    resp = completion(
+                        api_key=anyllm_api_key, api_base=anyllm_api_base,
+                        provider=anyllm_provider, model=vision_model,
+                        messages=messages, response_format=_SceneMovementPlan,
+                    )
+                    gc.collect()
+                    return json.loads(resp.choices[0].message.content)
+                except Exception as e:
+                    print(f"  Movement plan scene {scene_id} ({label}, attempt {attempt+1}): {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2 * (2 ** attempt))
+            return None
+
+        plan = _call("initial")
+        if plan is None:
+            print(f"  Failed to plan movement for scene {scene_id}")
+            continue
+        print(f"  Generated initial movement plan for scene {scene_id}")
+
+        # Verify → correct loop
+        messages.append({"role": "assistant", "content": json.dumps(plan, ensure_ascii=False)})
+        best, best_err = plan, float("inf")
+        for turn in range(1, max_improvement_turns + 1):
+            errs = _verify_meshy_movement(plan, layout_coords)
+            print(f"  Scene {scene_id} verify turn {turn}: {len(errs)} error(s)")
+            if len(errs) < best_err:
+                best_err = len(errs)
+                best = plan
+            if not errs:
+                break
+            messages.append({"role": "user", "content": [{"type": "text", "text": _format_movement_errors(errs)}]})
+            corrected = _call(f"correction {turn}")
+            if corrected is None:
+                break
+            messages.append({"role": "assistant", "content": json.dumps(corrected, ensure_ascii=False)})
+            plan = corrected
+        else:
+            final_errs = _verify_meshy_movement(plan, layout_coords)
+            if len(final_errs) < best_err:
+                best = plan
+
+        # --- Merge into shot_details ---
+        plan_lookup: Dict[int, Dict[str, dict]] = {}
+        for sp in best.get("shots", []):
+            sid = sp["shot_id"]
+            plan_lookup[sid] = {mv["asset_id"]: mv for mv in sp.get("movements", [])}
+
+        for shot in shots:
+            shot_id = shot.get("shot_id")
+            mvs = plan_lookup.get(shot_id, {})
+            for action in shot.get("character_actions", []):
+                aid = action.get("asset_id")
+                mv = mvs.get(aid)
+                if mv:
+                    action["start_coords"] = mv.get("start_coords")
+                    action["end_coords"] = mv.get("end_coords")
+                    action["start_rotation"] = mv.get("start_rotation")
+                    ec = mv.get("end_coords")
+                    sr = mv.get("start_rotation")
+                    print(f"  Shot {shot_id} / {aid}: end_coords={ec}, start_rotation={sr}")
+
+    # --- Cleanup temporary flags ---
+    for shot in shot_details:
+        for action in shot.get("character_actions", []):
+            action.pop("_is_movement", None)
+
+    print("\nMeshy movement planning complete")
+    return result

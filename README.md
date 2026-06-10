@@ -82,6 +82,24 @@ In the StoryBlender panel, click:
 
 After launching Gradio, fill in the following fields in the **Configuration** section.
 
+### Optional: auto-fill settings with `.env`
+
+For easier local testing, you can keep your API keys and preferred defaults in a private `.env` file. StoryBlender loads it automatically before building the Gradio UI, so the Configuration fields are pre-filled when you launch from Blender.
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and fill in the keys you use. The `.env` file is ignored by git, so it is safe for local secrets as long as you do not manually add it to a commit. If you prefer to store secrets somewhere else, set `STORYBLENDER_ENV_FILE` to an absolute path before launching Blender.
+
+Required and optional values:
+- Required: `ANYLLM_API_KEY`, `ANYLLM_API_BASE`, and `ANYLLM_PROVIDER` for reasoning and vision steps.
+- Required, choose one: Gemini image generation (`GEMINI_API_KEY`, `GEMINI_API_BASE`, `GEMINI_IMAGE_MODEL`) or OpenAI-compatible image generation (`OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_IMAGE_MODEL`). Select the active one with `STORYBLENDER_IMAGE_GEN_PLATFORM`.
+- Optional: `SKETCHFAB_API_KEY`, required only if you want to retrieve 3D models from Sketchfab.
+- Required, choose one: Meshy (`MESHY_API_KEY`, `MESHY_MODEL`) or Hunyuan3D (`TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY`) for 3D model generation. Select the active one with `STORYBLENDER_AI_PLATFORM`.
+- Optional: `UTHANA_API_KEY` and `UTHANA_FPS`. If left empty, the Uthana animation pipeline and the animation auto pipeline will not be available.
+- Optional: `STORYBLENDER_PROJECT_DIR`, an absolute project directory to pre-fill the UI.
+
 ### First row
 - **Gemini Image Model**: name of Nano Banana (e.g. `gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview`). Note that currently Gemini is becoming very strict about copyright censorship, we are currently working on to incorporate more models to bypass this issue.
 - **Gemini API Key**: your API key
@@ -138,4 +156,3 @@ If you find this project useful in your research, please cite:
       url={https://arxiv.org/abs/2604.03315}, 
 }
 ```
-

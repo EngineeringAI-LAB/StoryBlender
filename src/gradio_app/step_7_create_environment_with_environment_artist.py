@@ -491,6 +491,359 @@ def finish_environment_creation(project_dir, layout_data, current_filepath, envi
     }
 
 
+def apply_environment_all_scenes_ai(blender_client, layout_data, environment_applied, layout_script_editor, project_dir, anyllm_api_key=None, anyllm_api_base=None, anyllm_provider="gemini", vision_model="gemini-3-flash-preview", progress=gr.Progress(track_tqdm=False)):
+    """Apply AI-selected environment to ALL scenes in sequence, then auto-finish.
+    
+    Yields intermediate status updates as each scene is processed.
+    Final yield includes all outputs needed to save and reinitialize.
+    """
+    noop_editor = layout_script_editor.update_with_result(None)
+    
+    if not layout_data:
+        yield (
+            gr.update(value="\u26a0\ufe0f Layout data not loaded. Please initialize first.", visible=True),
+            environment_applied,
+            gr.update(),  # scene_buttons_row
+            gr.update(),  # environment_config_row
+            gr.update(),  # apply_all_ai_btn
+        ) + noop_editor
+        return
+    
+    # Ensure MCP server is running
+    success, message = blender_client.ensure_server_running()
+    if not success:
+        yield (
+            gr.update(value=f"\u26a0\ufe0f {message}", visible=True),
+            environment_applied,
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        ) + noop_editor
+        return
+    
+    scene_details = layout_data.get("scene_details", [])
+    num_scenes = len(scene_details)
+    new_environment_applied = environment_applied.copy() if environment_applied else {}
+    
+    for idx, scene_detail in enumerate(scene_details):
+        scene_id = scene_detail.get("scene_id")
+        scene_setup = scene_detail.get("scene_setup", {})
+        scene_type = scene_setup.get("scene_type", "outdoor")
+        ground_description = scene_setup.get("ground_description", "")
+        is_indoor = scene_type == "indoor"
+        categories_list = ["floor"] if is_indoor else ["terrain"]
+        
+        # Compute width/depth from scene_size
+        layout_description = scene_setup.get("layout_description", {})
+        scene_size = layout_description.get("scene_size", {})
+        x = scene_size.get("x", 10)
+        x_negative = scene_size.get("x_negative", -10)
+        y = scene_size.get("y", 10)
+        y_negative = scene_size.get("y_negative", -10)
+        z = scene_size.get("z", 4)
+        
+        width = (x - x_negative) * (2.0 if is_indoor else 3.0)
+        depth = (y - y_negative) * (2.0 if is_indoor else 3.0)
+        
+        # Wall parameters for indoor scenes
+        wall_description = scene_setup.get("wall_description", "") if is_indoor else None
+        wall_categories_list = ["wall"] if is_indoor else None
+        wall_x = float(x) if is_indoor else None
+        wall_x_negative = float(x_negative) if is_indoor else None
+        wall_y = float(y) if is_indoor else None
+        wall_y_negative = float(y_negative) if is_indoor else None
+        wall_z = float(z) if is_indoor else None
+        
+        progress((idx, num_scenes), desc=f"Scene {scene_id}")
+        
+        # Yield progress status
+        yield (
+            gr.update(value=f"\u23f3 Creating environment for **Scene {scene_id}** ({idx + 1}/{num_scenes})...", visible=True),
+            new_environment_applied,
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        ) + noop_editor
+        
+        # Switch to the scene
+        scene_name = f"Scene_{scene_id}"
+        response = blender_client.switch_or_create_scene(scene_name=scene_name)
+        if response.get("status") == "error":
+            yield (
+                gr.update(value=f"\u26a0\ufe0f Failed to switch to Scene {scene_id}: {response.get('message', 'Unknown error')}. Skipping.", visible=True),
+                new_environment_applied,
+                gr.update(),
+                gr.update(),
+                gr.update(),
+            ) + noop_editor
+            continue
+        
+        # Apply environment with AI (no manual asset_id)
+        response = blender_client.environment_artist(
+            ground_description=ground_description.strip() if ground_description else None,
+            asset_id=None,
+            categories_limitation=categories_list,
+            width=width,
+            depth=depth,
+            wall_description=wall_description.strip() if wall_description else None,
+            wall_asset_id=None,
+            wall_categories_limitation=wall_categories_list,
+            wall_x=wall_x,
+            wall_x_negative=wall_x_negative,
+            wall_y=wall_y,
+            wall_y_negative=wall_y_negative,
+            wall_z=wall_z,
+            anyllm_api_key=anyllm_api_key,
+            anyllm_api_base=anyllm_api_base,
+            anyllm_provider=anyllm_provider,
+            vision_model=vision_model,
+        )
+        
+        if response.get("status") == "error":
+            yield (
+                gr.update(value=f"\u26a0\ufe0f Environment artist error for Scene {scene_id}: {response.get('message', 'Unknown error')}. Skipping.", visible=True),
+                new_environment_applied,
+                gr.update(),
+                gr.update(),
+                gr.update(),
+            ) + noop_editor
+            continue
+        
+        result = response.get("result", {})
+        if not result.get("success"):
+            yield (
+                gr.update(value=f"\u26a0\ufe0f Environment failed for Scene {scene_id}: {result.get('error', 'Unknown')}. Skipping.", visible=True),
+                new_environment_applied,
+                gr.update(),
+                gr.update(),
+                gr.update(),
+            ) + noop_editor
+            continue
+        
+        applied_asset_id = result.get("ground_asset_id", "")
+        wall_asset_id_result = result.get("wall_asset_id", "")
+        new_environment_applied[scene_id] = {
+            "ground_asset_id": applied_asset_id,
+            "wall_asset_id": wall_asset_id_result if wall_asset_id_result else None,
+        }
+    
+    progress((num_scenes, num_scenes), desc="Saving")
+    
+    # Auto-finish: save JSON and reinitialize
+    finish_result = finish_environment_creation(project_dir, layout_data, None, new_environment_applied, layout_script_editor)
+    
+    if finish_result.get("error"):
+        yield (
+            gr.update(value=finish_result["error"], visible=True),
+            new_environment_applied,
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        ) + noop_editor
+        return
+    
+    # Build summary of applied environments
+    summary_lines = []
+    for scene_detail in scene_details:
+        sid = scene_detail.get("scene_id")
+        env = new_environment_applied.get(sid)
+        if env and isinstance(env, dict):
+            ground = env.get("ground_asset_id", "\u274c not applied")
+            wall = env.get("wall_asset_id")
+            line = f"- **Scene {sid}:** ground=`{ground}`"
+            if wall:
+                line += f", wall=`{wall}`"
+            summary_lines.append(line)
+        else:
+            summary_lines.append(f"- **Scene {sid}:** \u274c not applied")
+    summary = "\n".join(summary_lines)
+    
+    warning = finish_result.get("warning", "")
+    if warning:
+        status_msg = f"{warning}\n\n{summary}\n\n\u2705 Layout script saved to: `{finish_result['output_path']}`"
+    else:
+        status_msg = f"\u2705 **Environment created for all {num_scenes} scene(s) with AI!**\n\n{summary}\n\nLayout script saved to: `{finish_result['output_path']}`"
+    
+    yield (
+        gr.update(value=status_msg, visible=True),
+        new_environment_applied,
+        gr.update(visible=False),  # scene_buttons_row - hide
+        gr.update(visible=False),  # environment_config_row - hide
+        gr.update(visible=False),  # apply_all_ai_btn - hide
+    ) + layout_script_editor.update_with_result(finish_result)
+
+
+def resume_environment_all_scenes(blender_client, layout_data, environment_applied, layout_script_editor, project_dir, progress=gr.Progress(track_tqdm=False)):
+    """Resume environment creation for ALL scenes using `ground_asset_id` (and
+    `wall_asset_id` for indoor scenes) already stored in the layout script.
+    Bypasses AI selection — same path as the manual Asset ID fields, applied to
+    every scene with one click.
+
+    Yields the same output tuple shape as `apply_environment_all_scenes_ai`.
+    """
+    noop_editor = layout_script_editor.update_with_result(None)
+
+    if not layout_data:
+        yield (
+            gr.update(value="\u26a0\ufe0f Layout data not loaded. Please initialize first.", visible=True),
+            environment_applied,
+            gr.update(), gr.update(), gr.update(),
+        ) + noop_editor
+        return
+
+    success, message = blender_client.ensure_server_running()
+    if not success:
+        yield (
+            gr.update(value=f"\u26a0\ufe0f {message}", visible=True),
+            environment_applied,
+            gr.update(), gr.update(), gr.update(),
+        ) + noop_editor
+        return
+
+    scene_details = layout_data.get("scene_details", [])
+    num_scenes = len(scene_details)
+    new_environment_applied = environment_applied.copy() if environment_applied else {}
+    skipped = []
+
+    for idx, scene_detail in enumerate(scene_details):
+        scene_id = scene_detail.get("scene_id")
+        scene_setup = scene_detail.get("scene_setup", {})
+        scene_type = scene_setup.get("scene_type", "outdoor")
+        is_indoor = scene_type == "indoor"
+        ground_asset_id = (scene_setup.get("ground_asset_id") or "").strip()
+        wall_asset_id = (scene_setup.get("wall_asset_id") or "").strip() if is_indoor else ""
+        categories_list = ["floor"] if is_indoor else ["terrain"]
+        wall_categories_list = ["wall"] if is_indoor else None
+
+        # Compute width/depth from scene_size
+        layout_description = scene_setup.get("layout_description", {})
+        scene_size = layout_description.get("scene_size", {})
+        x = scene_size.get("x", 10)
+        x_negative = scene_size.get("x_negative", -10)
+        y = scene_size.get("y", 10)
+        y_negative = scene_size.get("y_negative", -10)
+        z = scene_size.get("z", 4)
+
+        width = (x - x_negative) * (2.0 if is_indoor else 3.0)
+        depth = (y - y_negative) * (2.0 if is_indoor else 3.0)
+
+        wall_x = float(x) if is_indoor else None
+        wall_x_negative = float(x_negative) if is_indoor else None
+        wall_y = float(y) if is_indoor else None
+        wall_y_negative = float(y_negative) if is_indoor else None
+        wall_z = float(z) if is_indoor else None
+
+        progress((idx, num_scenes), desc=f"Scene {scene_id}")
+
+        if not ground_asset_id:
+            skipped.append(scene_id)
+            yield (
+                gr.update(value=f"\u26a0\ufe0f Scene {scene_id} has no `ground_asset_id` in layout JSON. Skipping.", visible=True),
+                new_environment_applied,
+                gr.update(), gr.update(), gr.update(),
+            ) + noop_editor
+            continue
+
+        yield (
+            gr.update(value=f"\u23f3 Resuming environment for **Scene {scene_id}** ({idx + 1}/{num_scenes}) using ground=`{ground_asset_id}`" + (f", wall=`{wall_asset_id}`" if wall_asset_id else "") + "...", visible=True),
+            new_environment_applied,
+            gr.update(), gr.update(), gr.update(),
+        ) + noop_editor
+
+        scene_name = f"Scene_{scene_id}"
+        response = blender_client.switch_or_create_scene(scene_name=scene_name)
+        if response.get("status") == "error":
+            yield (
+                gr.update(value=f"\u26a0\ufe0f Failed to switch to Scene {scene_id}: {response.get('message', 'Unknown error')}. Skipping.", visible=True),
+                new_environment_applied,
+                gr.update(), gr.update(), gr.update(),
+            ) + noop_editor
+            continue
+
+        # Apply environment with explicit asset IDs (bypasses AI selection)
+        response = blender_client.environment_artist(
+            ground_description=None,
+            asset_id=ground_asset_id,
+            categories_limitation=categories_list,
+            width=width,
+            depth=depth,
+            wall_description=None,
+            wall_asset_id=wall_asset_id if wall_asset_id else None,
+            wall_categories_limitation=wall_categories_list,
+            wall_x=wall_x,
+            wall_x_negative=wall_x_negative,
+            wall_y=wall_y,
+            wall_y_negative=wall_y_negative,
+            wall_z=wall_z,
+        )
+
+        if response.get("status") == "error":
+            yield (
+                gr.update(value=f"\u26a0\ufe0f Environment artist error for Scene {scene_id}: {response.get('message', 'Unknown error')}. Skipping.", visible=True),
+                new_environment_applied,
+                gr.update(), gr.update(), gr.update(),
+            ) + noop_editor
+            continue
+
+        result = response.get("result", {})
+        if not result.get("success"):
+            yield (
+                gr.update(value=f"\u26a0\ufe0f Environment failed for Scene {scene_id}: {result.get('error', 'Unknown')}. Skipping.", visible=True),
+                new_environment_applied,
+                gr.update(), gr.update(), gr.update(),
+            ) + noop_editor
+            continue
+
+        applied_ground = result.get("ground_asset_id", ground_asset_id)
+        applied_wall = result.get("wall_asset_id", wall_asset_id) or None
+        new_environment_applied[scene_id] = {
+            "ground_asset_id": applied_ground,
+            "wall_asset_id": applied_wall,
+        }
+
+    progress((num_scenes, num_scenes), desc="Saving")
+
+    finish_result = finish_environment_creation(project_dir, layout_data, None, new_environment_applied, layout_script_editor)
+
+    if finish_result.get("error"):
+        yield (
+            gr.update(value=finish_result["error"], visible=True),
+            new_environment_applied,
+            gr.update(), gr.update(), gr.update(),
+        ) + noop_editor
+        return
+
+    summary_lines = []
+    for scene_detail in scene_details:
+        sid = scene_detail.get("scene_id")
+        env = new_environment_applied.get(sid)
+        if env and isinstance(env, dict):
+            ground = env.get("ground_asset_id", "\u274c not applied")
+            wall = env.get("wall_asset_id")
+            line = f"- **Scene {sid}:** ground=`{ground}`"
+            if wall:
+                line += f", wall=`{wall}`"
+            summary_lines.append(line)
+        else:
+            summary_lines.append(f"- **Scene {sid}:** \u274c not applied")
+    summary = "\n".join(summary_lines)
+
+    header = f"\u2705 **Resumed environment for {num_scenes - len(skipped)}/{num_scenes} scene(s) from layout JSON.**"
+    if skipped:
+        header += f"\n\n\u26a0\ufe0f Skipped scenes (no `ground_asset_id`): {', '.join(str(s) for s in skipped)}"
+    warning = finish_result.get("warning", "")
+    extra = f"\n\n{warning}" if warning else ""
+    status_msg = f"{header}{extra}\n\n{summary}\n\nLayout script saved to: `{finish_result['output_path']}`"
+
+    yield (
+        gr.update(value=status_msg, visible=True),
+        new_environment_applied,
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=False),
+    ) + layout_script_editor.update_with_result(finish_result)
+
+
 def create_scene_button_click_handler(blender_client, scene_id):
     """Create a click handler for a specific scene button."""
     def handler(layout_data):
@@ -542,6 +895,19 @@ def create_environment_artist_ui(project_dir, blender_client, anyllm_api_key=Non
     
     # Status indicator
     environment_status = gr.Markdown(value="", visible=False)
+    
+    # Batch buttons (hidden initially)
+    with gr.Row(visible=False) as batch_buttons_row:
+        apply_all_ai_btn = gr.Button(
+            "🤖 Create Environment for All Scenes with AI",
+            variant="primary", size="lg",
+        )
+        resume_all_btn = gr.Button(
+            "♻️ Resume Environment for All Scenes",
+            variant="secondary", size="lg",
+        )
+    
+    gr.Markdown("*Or select a scene below to manually configure environment:*", visible=True)
     
     # Scene buttons row (hidden initially)
     with gr.Row(visible=False) as scene_buttons_row:
@@ -652,14 +1018,16 @@ def create_environment_artist_ui(project_dir, blender_client, anyllm_api_key=Non
         
         # Update scene button visibility based on number of scenes
         button_updates = []
+        show_ai_btn = False
         if layout_data:
             num_scenes = len(layout_data.get("scene_details", []))
+            show_ai_btn = num_scenes > 0
             for i in range(10):
                 button_updates.append(gr.update(visible=(i < num_scenes)))
         else:
             button_updates = [gr.update(visible=False) for _ in range(10)]
         
-        return (status_update, scene_row_update, layout_data, filepath, environment_applied) + tuple(button_updates)
+        return (status_update, scene_row_update, layout_data, filepath, environment_applied, gr.update(visible=show_ai_btn)) + tuple(button_updates)
     
     initialize_btn.click(
         fn=init_handler,
@@ -670,6 +1038,7 @@ def create_environment_artist_ui(project_dir, blender_client, anyllm_api_key=Non
             layout_data_state,
             current_filepath_state,
             environment_applied_state,
+            batch_buttons_row,
         ] + scene_buttons,
         concurrency_limit=None,
         show_progress="hidden",
@@ -766,6 +1135,7 @@ def create_environment_artist_ui(project_dir, blender_client, anyllm_api_key=Non
                 gr.update(value=result["error"], visible=True),  # environment_status
                 gr.update(),  # scene_buttons_row - no change
                 gr.update(),  # environment_config_row - no change
+                gr.update(),  # apply_all_ai_btn - no change
             ) + layout_script_editor.update_with_result(None)
         
         # Success - hide scene buttons and config, show JSON editor with saved file
@@ -779,6 +1149,7 @@ def create_environment_artist_ui(project_dir, blender_client, anyllm_api_key=Non
             gr.update(value=status_msg, visible=True),  # environment_status
             gr.update(visible=False),  # scene_buttons_row - hide
             gr.update(visible=False),  # environment_config_row - hide
+            gr.update(visible=False),  # apply_all_ai_btn - hide
         ) + layout_script_editor.update_with_result(result)
     
     finish_btn.click(
@@ -793,7 +1164,66 @@ def create_environment_artist_ui(project_dir, blender_client, anyllm_api_key=Non
             environment_status,
             scene_buttons_row,
             environment_config_row,
+            batch_buttons_row,
         ] + layout_script_editor.get_output_components(),
+    )
+    
+    # Apply All Scenes with AI button handler
+    def apply_all_ai_handler(layout_data, environment_applied, proj_dir, api_key, api_base, provider, v_model, progress=gr.Progress(track_tqdm=False)):
+        yield from apply_environment_all_scenes_ai(
+            blender_client, layout_data, environment_applied, layout_script_editor, proj_dir,
+            anyllm_api_key=api_key,
+            anyllm_api_base=api_base,
+            anyllm_provider=provider,
+            vision_model=v_model,
+            progress=progress,
+        )
+    
+    apply_all_ai_btn.click(
+        fn=apply_all_ai_handler,
+        inputs=[
+            layout_data_state,
+            environment_applied_state,
+            project_dir,
+            anyllm_api_key,
+            anyllm_api_base,
+            anyllm_provider,
+            vision_model,
+        ],
+        outputs=[
+            environment_status,
+            environment_applied_state,
+            scene_buttons_row,
+            environment_config_row,
+            batch_buttons_row,
+        ] + layout_script_editor.get_output_components(),
+        concurrency_limit=None,
+        show_progress="full",
+    )
+    
+    # Resume Environment for All Scenes button handler
+    def resume_all_handler(layout_data, environment_applied, proj_dir, progress=gr.Progress(track_tqdm=False)):
+        yield from resume_environment_all_scenes(
+            blender_client, layout_data, environment_applied, layout_script_editor, proj_dir,
+            progress=progress,
+        )
+    
+    resume_all_btn.click(
+        fn=resume_all_handler,
+        inputs=[
+            layout_data_state,
+            environment_applied_state,
+            project_dir,
+        ],
+        outputs=[
+            environment_status,
+            environment_applied_state,
+            scene_buttons_row,
+            environment_config_row,
+            batch_buttons_row,
+        ] + layout_script_editor.get_output_components(),
+        concurrency_limit=None,
+        show_progress="full",
     )
     
     return {

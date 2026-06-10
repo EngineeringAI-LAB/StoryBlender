@@ -376,6 +376,132 @@ def _rig_single_model(
         }
 
 
+def is_rig_task_valid(
+    rig_task_id: Optional[str],
+    *,
+    meshy_api_key: Optional[str] = None,
+    meshy_api_base: str = "https://api.meshy.ai/openapi/v1",
+    session: Optional[requests.Session] = None,
+) -> bool:
+    """Check whether a Meshy rigging task is still valid and usable.
+
+    A task is considered invalid if:
+      - rig_task_id is empty/None
+      - GET /rigging/{id} returns 404 (task not found / expired)
+      - status is not SUCCEEDED
+      - expires_at (if present) is in the past
+
+    Per Meshy docs (https://docs.meshy.ai/en/api/rigging), rigging task
+    results can expire; callers should re-rig in that case.
+    """
+    if not rig_task_id:
+        return False
+
+    key = meshy_api_key or os.getenv("MESHY_API_KEY")
+    if not key:
+        return False
+
+    sess = session or requests.Session()
+    headers = {"Authorization": f"Bearer {key}"}
+
+    try:
+        resp = sess.get(
+            f"{meshy_api_base}/rigging/{rig_task_id}",
+            headers=headers,
+            timeout=30,
+        )
+    except (RequestException, ProxyError, ConnectionError) as e:
+        # Treat network failure as "unknown" — be conservative and say invalid
+        # so callers can re-rig safely. (They could also retry later.)
+        print(f"Rig task validity check failed for {rig_task_id}: {e}")
+        return False
+
+    if resp.status_code == 404:
+        return False
+    if not resp.ok:
+        return False
+
+    try:
+        data = resp.json()
+    except ValueError:
+        return False
+
+    if data.get("status") != "SUCCEEDED":
+        return False
+
+    expires_at = data.get("expires_at")
+    if expires_at:
+        try:
+            exp = int(expires_at)
+            now_s = int(time.time())
+            now_ms = now_s * 1000
+            # Meshy uses unix-ms; tolerate seconds-encoded values too.
+            expired = (exp < now_ms) if exp > 10**12 else (exp < now_s)
+            if expired:
+                return False
+        except (TypeError, ValueError):
+            pass
+
+    # Ensure the rigged_character_glb_url is still resolvable; if Meshy keeps
+    # the task record but URLs have expired, the result section will be empty.
+    rig_result = data.get("result") or {}
+    if not rig_result.get("rigged_character_glb_url"):
+        return False
+
+    return True
+
+
+def ensure_valid_rig_task(
+    asset_data: Dict[str, Any],
+    output_dir: str,
+    *,
+    meshy_api_key: Optional[str] = None,
+    meshy_api_base: str = "https://api.meshy.ai/openapi/v1",
+    session: Optional[requests.Session] = None,
+) -> Dict[str, Any]:
+    """Ensure the given character asset has a valid Meshy rig task.
+
+    If the asset's `rig_task_id` is missing, expired, or otherwise invalid,
+    this re-runs rigging via `_rig_single_model` and returns the updated
+    asset dict (with refreshed rig_task_id, rig_expires_at, rigged_file_path,
+    rigged_running_file_path). Otherwise the original asset_data is returned
+    unchanged.
+
+    Raises MeshyRiggingAPIError if no API key is available when re-rigging
+    is required.
+    """
+    rig_task_id = asset_data.get("rig_task_id")
+    if is_rig_task_valid(
+        rig_task_id,
+        meshy_api_key=meshy_api_key,
+        meshy_api_base=meshy_api_base,
+        session=session,
+    ):
+        return asset_data
+
+    asset_id = asset_data.get("asset_id", "<unknown>")
+    if rig_task_id:
+        print(f"Rig task {rig_task_id} for asset {asset_id} is missing or expired. Re-rigging...")
+    else:
+        print(f"No rig_task_id for asset {asset_id}. Running rigging now...")
+
+    key = meshy_api_key or os.getenv("MESHY_API_KEY")
+    if not key:
+        raise MeshyRiggingAPIError(
+            "Missing Meshy API key. Set MESHY_API_KEY env var or pass meshy_api_key argument."
+        )
+
+    os.makedirs(output_dir, exist_ok=True)
+    return _rig_single_model(
+        asset_id=asset_id,
+        asset_data=asset_data,
+        output_dir=output_dir,
+        meshy_api_key=key,
+        meshy_api_base=meshy_api_base,
+        session=session,
+    )
+
+
 def rig_models(
     path_to_input_json: str,
     output_dir: str,

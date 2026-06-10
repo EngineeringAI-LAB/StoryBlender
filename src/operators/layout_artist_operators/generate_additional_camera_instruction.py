@@ -416,7 +416,6 @@ def generate_additional_camera_instruction(
                 reasoning_effort=reasoning_effort,
                 messages=messages,
                 response_format=AdditionalCameraInstructionsOutput,
-                client_args={"http_options": {"timeout": 300000}}
             )
             gc.collect()
             result = json.loads(response.choices[0].message.content)

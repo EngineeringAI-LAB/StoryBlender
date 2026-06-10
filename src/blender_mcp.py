@@ -1891,7 +1891,7 @@ class BlenderMCPServer:
                     
                     # Add delay between assets to let Gradio's asyncio event loop stabilize
                     # This helps prevent crashes from thread conflicts during heavy Blender operations
-                    time.sleep(3)
+                    # time.sleep(3)
                     
                 except Exception as e:
                     error_msg = f"{model_id}: {str(e)}"
@@ -1976,9 +1976,9 @@ class BlenderMCPServer:
             
             # Final delay to let Gradio's asyncio event loop stabilize before returning
             # This helps prevent crashes during the response phase
-            time.sleep(3)
-            gc.collect()  # Force garbage collection at a safe point
-            time.sleep(3)
+            # time.sleep(3)
+            # gc.collect()  # Force garbage collection at a safe point
+            # time.sleep(3)
             
             return result
             
@@ -2125,7 +2125,7 @@ class BlenderMCPServer:
                     resized_models.append(model_id)
                     print(f"Successfully resized model: {model_id}")
                     
-                    time.sleep(3)
+                    # time.sleep(3)
                     
                 except Exception as e:
                     error_msg = f"{model_id}: {str(e)}"
@@ -2199,9 +2199,9 @@ class BlenderMCPServer:
             except Exception as e:
                 print(f"Warning: Failed to restore viewport defaults: {e}")
             
-            time.sleep(3)
-            gc.collect()
-            time.sleep(3)
+            # time.sleep(3)
+            # gc.collect()
+            # time.sleep(3)
             
             return result
             

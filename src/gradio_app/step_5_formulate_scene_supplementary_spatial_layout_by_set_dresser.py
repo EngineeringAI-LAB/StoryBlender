@@ -5,6 +5,10 @@ import gradio as gr
 from ..operators.set_dresser_operators.generate_supplementary_layout_description import (
     generate_supplementary_layout_description,
 )
+from ..operators.concept_artist_operators.refine_dimension_estimation import (
+    refine_all_asset_dimensions_parallel,
+    collect_assets_needing_resize,
+)
 from .json_editor import JSONEditorComponent
 from .blender_client import BlenderClient
 from .path_utils import make_paths_absolute, make_paths_relative
@@ -13,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# Step 5.1: Resize Supplementary Assets (moved from Step 4.5)
+# Step 5.1: Resize Supplementary Assets
 # ============================================================================
 
 def load_resize_supplementary_model_choices(project_dir):
@@ -234,6 +238,212 @@ def create_resize_supplementary_wrapper(editor_component, blender_client):
     return resize_wrapper
 
 
+def refine_supplementary_size_estimation(
+    blender_client,
+    project_dir,
+    editor_component,
+    reasoning_model,
+    anyllm_api_key,
+    anyllm_api_base,
+    anyllm_provider,
+):
+    """Audit resized supplementary dimensions with a vision LLM and re-resize abnormal ones."""
+    if not project_dir or not os.path.isabs(project_dir):
+        return {"error": "⚠️ Project directory must be an absolute path"}
+
+    dim_json_path = os.path.join(project_dir, "formatted_supplementary_assets", "dimension_estimation.json")
+    resized_dir = os.path.join(project_dir, "resized_supplementary_assets")
+    resized_json_path = os.path.join(resized_dir, "resized_supplementary_model.json")
+    output_json_filename = "resized_supplementary_model.json"
+
+    if not os.path.exists(resized_json_path):
+        return {"error": f"⚠️ {output_json_filename} not found. Please run Step 5.1 (Resize) first."}
+    if not os.path.exists(dim_json_path):
+        return {"error": "⚠️ formatted_supplementary_assets/dimension_estimation.json not found."}
+
+    try:
+        with open(resized_json_path, 'r', encoding='utf-8') as f:
+            resized_data = json.load(f)
+        resized_data = make_paths_absolute(resized_data, project_dir)
+    except Exception as e:
+        return {"error": f"⚠️ Failed to load resized JSON: {e}"}
+
+    asset_sheet = resized_data.get("asset_sheet", []) or []
+    if not asset_sheet:
+        return {"error": "⚠️ resized supplementary JSON has no asset_sheet"}
+
+    provider = (anyllm_provider or "").strip() or "gemini"
+    api_base = anyllm_api_base if (anyllm_api_base and anyllm_api_base.strip()) else None
+
+    refinements = refine_all_asset_dimensions_parallel(
+        asset_sheet=asset_sheet,
+        anyllm_api_key=anyllm_api_key,
+        anyllm_api_base=api_base,
+        anyllm_provider=provider,
+        reasoning_model=reasoning_model,
+        reasoning_effort="medium",
+    )
+
+    fix_map = collect_assets_needing_resize(refinements)
+
+    if not fix_map:
+        editor_component.set_save_path(resized_dir)
+        return {
+            "success": True,
+            "data": resized_data,
+            "output_path": resized_json_path,
+            "refined_count": 0,
+            "total_audited": len(asset_sheet),
+            "refinements": refinements,
+            "message": (
+                f"✅ All {len(asset_sheet)} supplementary asset dimensions look "
+                f"reasonable. No re-resizing performed."
+            ),
+        }
+
+    try:
+        with open(dim_json_path, 'r', encoding='utf-8') as f:
+            dim_data = json.load(f)
+        dim_data = make_paths_absolute(dim_data, project_dir)
+    except Exception as e:
+        return {"error": f"⚠️ Failed to load dimension_estimation.json: {e}"}
+
+    for asset in dim_data.get("asset_sheet", []) or []:
+        aid = asset.get("asset_id")
+        if aid in fix_map:
+            r = fix_map[aid]
+            asset["width"] = r.get("width")
+            asset["depth"] = r.get("depth")
+            asset["height"] = r.get("height")
+
+    ok, msg = blender_client.ensure_server_running()
+    if not ok:
+        return {"error": f"⚠️ {msg}"}
+
+    os.makedirs(resized_dir, exist_ok=True)
+    temp_input_path = dim_json_path + ".refine.tmp"
+    try:
+        with open(temp_input_path, 'w', encoding='utf-8') as f:
+            json.dump(dim_data, f, indent=2)
+
+        response = blender_client.resize_assets(
+            path_to_script=temp_input_path,
+            model_output_dir=resized_dir,
+            model_id_list=list(fix_map.keys()),
+            output_json_filename=output_json_filename,
+        )
+
+        if response.get("status") == "error":
+            return {"error": f"⚠️ Blender error: {response.get('message', 'Unknown error')}"}
+
+        result = response.get("result", {})
+        if "error" in result:
+            return {"error": f"⚠️ {result['error']}"}
+
+        try:
+            with open(resized_json_path, 'r', encoding='utf-8') as f:
+                new_data = json.load(f)
+            new_data = make_paths_absolute(new_data, project_dir)
+        except Exception as e:
+            logger.warning("refine: path conversion failed for resized supplementary JSON: %s", e)
+            new_data = resized_data
+
+        editor_component.set_save_path(resized_dir)
+
+        return {
+            "success": True,
+            "data": new_data,
+            "output_path": resized_json_path,
+            "refined_count": len(fix_map),
+            "total_audited": len(asset_sheet),
+            "refinements": refinements,
+            "errors": result.get("errors", []),
+        }
+    except Exception as e:
+        return {"error": f"⚠️ Failed to refine and resize: {e}"}
+    finally:
+        if os.path.exists(temp_input_path):
+            try:
+                os.remove(temp_input_path)
+            except OSError:
+                pass
+
+
+def show_loading_and_refine_supplementary_models(
+    editor_component,
+    blender_client,
+    project_dir,
+    reasoning_model,
+    anyllm_api_key,
+    anyllm_api_base,
+    anyllm_provider,
+):
+    """Show loading indicator and run refine for supplementary assets."""
+    loading_outputs = editor_component.update_with_result(None)
+    loading_state = (
+        gr.update(
+            value=(
+                "🪞 **Auditing resized supplementary dimensions with the LLM and "
+                "re-resizing any abnormal models...** This may take a few minutes."
+            ),
+            visible=True,
+        ),
+        gr.update(visible=False),  # Hide refine button
+        gr.update(visible=False),  # Hide resize button
+    )
+    yield loading_outputs + loading_state
+
+    result = refine_supplementary_size_estimation(
+        blender_client=blender_client,
+        project_dir=project_dir,
+        editor_component=editor_component,
+        reasoning_model=reasoning_model,
+        anyllm_api_key=anyllm_api_key,
+        anyllm_api_base=anyllm_api_base,
+        anyllm_provider=anyllm_provider,
+    )
+
+    final_outputs = editor_component.update_with_result(result)
+
+    if result.get("success"):
+        if result.get("refined_count", 0) > 0:
+            success_msg = (
+                f"✅ **Refinement complete.** Re-resized "
+                f"{result['refined_count']} of {result.get('total_audited', '?')} "
+                f"supplementary model(s) flagged as abnormal."
+            )
+        else:
+            success_msg = result.get(
+                "message",
+                "✅ All supplementary dimensions look reasonable. No re-resize performed.",
+            )
+    else:
+        success_msg = result.get("error", "")
+
+    final_state = (
+        gr.update(value=success_msg, visible=bool(success_msg)),
+        gr.update(visible=True),  # Show refine button
+        gr.update(visible=True),  # Show resize button
+    )
+    yield final_outputs + final_state
+
+
+def create_refine_supplementary_wrapper(editor_component, blender_client):
+    """Factory function to create a refine wrapper for supplementary assets."""
+    def refine_wrapper(project_dir, reasoning_model, anyllm_api_key, anyllm_api_base, anyllm_provider):
+        for result in show_loading_and_refine_supplementary_models(
+            editor_component,
+            blender_client,
+            project_dir,
+            reasoning_model,
+            anyllm_api_key,
+            anyllm_api_base,
+            anyllm_provider,
+        ):
+            yield result
+    return refine_wrapper
+
+
 def load_layout_script(project_dir):
     """Load the latest layout_script JSON from project_dir/layout_script/."""
     if not project_dir or not os.path.isabs(project_dir):
@@ -298,6 +508,7 @@ def validate_and_generate_supplementary_layout(
     reasoning_model,
     anyllm_api_key,
     anyllm_api_base,
+    anyllm_provider,
     project_dir,
     editor_component
 ):
@@ -307,6 +518,7 @@ def validate_and_generate_supplementary_layout(
         reasoning_model: The reasoning model to use for generation
         anyllm_api_key: The API key for authentication
         anyllm_api_base: The API base URL for any-llm (optional)
+        anyllm_provider: The LLM provider (e.g. 'gemini', 'openai')
         project_dir: The absolute path to the project directory
         editor_component: The JSONEditorComponent to save the result
     
@@ -337,10 +549,16 @@ def validate_and_generate_supplementary_layout(
     # Set API base to None if empty string
     anyllm_api_base = anyllm_api_base if anyllm_api_base.strip() else None
     
+    # Set provider to default if empty
+    anyllm_provider = anyllm_provider.strip() if anyllm_provider else "gemini"
+    if not anyllm_provider:
+        anyllm_provider = "gemini"
+
     # Generate supplementary layout description
     result = generate_supplementary_layout_description(
         anyllm_api_key=anyllm_api_key,
         anyllm_api_base=anyllm_api_base,
+        anyllm_provider=anyllm_provider,
         reasoning_model=reasoning_model,
         layout_script=layout_script,
         formatted_supplementary_assets=resized_supplementary_assets,
@@ -374,7 +592,7 @@ def validate_and_generate_supplementary_layout(
         }
 
 
-def show_loading_and_generate(editor_component, reasoning_model, anyllm_api_key, anyllm_api_base, project_dir):
+def show_loading_and_generate(editor_component, reasoning_model, anyllm_api_key, anyllm_api_base, anyllm_provider, project_dir):
     """Show loading indicator and generate supplementary layout."""
     # Build initial loading state - all editor components hidden
     loading_outputs = editor_component.update_with_result(None)
@@ -386,30 +604,30 @@ def show_loading_and_generate(editor_component, reasoning_model, anyllm_api_key,
     
     # Generate the supplementary layout (pass editor_component for saving)
     result = validate_and_generate_supplementary_layout(
-        reasoning_model, anyllm_api_key, anyllm_api_base, project_dir, editor_component
+        reasoning_model, anyllm_api_key, anyllm_api_base, anyllm_provider, project_dir, editor_component
     )
     
     # Return final result with editor component updated
     final_outputs = editor_component.update_with_result(result)
     
-    # Check if there's an error
-    if result.get("error"):
-        final_state = (
-            gr.update(value=result["error"], visible=True),
-        )
+    # Show success message if generation succeeded
+    if result.get("success"):
+        success_msg = "✅ **Supplementary spatial layout generated successfully!** You can review the layout in the JSON editor and proceed to the next step."
     else:
-        final_state = (
-            gr.update(visible=False),
-        )
+        success_msg = result.get("error", "")
+    
+    final_state = (
+        gr.update(value=success_msg, visible=bool(success_msg)),
+    )
     
     yield final_outputs + final_state
 
 
 def create_generate_wrapper(editor_component):
     """Factory function to create a generate wrapper bound to a specific editor component."""
-    def generate_wrapper(reasoning_model, anyllm_api_key, anyllm_api_base, project_dir):
+    def generate_wrapper(reasoning_model, anyllm_api_key, anyllm_api_base, anyllm_provider, project_dir):
         """Wrapper to properly yield from the generator."""
-        for result in show_loading_and_generate(editor_component, reasoning_model, anyllm_api_key, anyllm_api_base, project_dir):
+        for result in show_loading_and_generate(editor_component, reasoning_model, anyllm_api_key, anyllm_api_base, anyllm_provider, project_dir):
             yield result
     return generate_wrapper
 
@@ -942,8 +1160,17 @@ def create_supplementary_layout_ui(reasoning_model, anyllm_api_key, anyllm_api_b
     
     resize_selection_status = gr.Markdown(value="No models loaded. Click 'Load Models' to load available models.", visible=True)
     
-    resize_btn = gr.Button("📐 Resize Supplementary Assets", variant="primary", size="lg")
-    
+    with gr.Row():
+        resize_btn = gr.Button("📐 Resize Supplementary Assets", variant="primary", size="lg", scale=1)
+        refine_btn = gr.Button("🪞 Refine Size Estimation", variant="secondary", size="lg", scale=1)
+
+    gr.Markdown(
+        "ℹ️ **Refine Size Estimation** audits the current resized dimensions of every "
+        "supplementary asset with a vision LLM (one model at a time, in parallel). "
+        "Models with clearly abnormal width/depth/height are re-estimated and "
+        "re-resized in Blender."
+    )
+
     # Loading status indicator for resize assets (hidden by default)
     resize_loading_status = gr.Markdown(value="", visible=False)
     
@@ -1011,11 +1238,18 @@ def create_supplementary_layout_ui(reasoning_model, anyllm_api_key, anyllm_api_b
         inputs=[project_dir, resize_model_selection],
         outputs=resized_editor.get_output_components() + [resize_loading_status, resize_btn],
     )
-    
+
+    # Refine button click handler
+    refine_supplementary_wrapper = create_refine_supplementary_wrapper(resized_editor, blender_client)
+    refine_btn.click(
+        fn=refine_supplementary_wrapper,
+        inputs=[project_dir, reasoning_model, anyllm_api_key, anyllm_api_base, anyllm_provider],
+        outputs=resized_editor.get_output_components() + [resize_loading_status, refine_btn, resize_btn],
+    )
+
     # =========================================================================
     # Step 5.2: Generate Supplementary Spatial Layout for Each Scene (was Step 5.1)
     # =========================================================================
-    gr.Markdown("---")
     gr.Markdown("### Step 5.2: Generate Supplementary Spatial Layout for Each Scene")
     gr.Markdown("Generate 3D spatial layout for supplementary decorative assets based on the existing scene layout and resized supplementary assets.")
     
@@ -1051,6 +1285,7 @@ def create_supplementary_layout_ui(reasoning_model, anyllm_api_key, anyllm_api_b
             reasoning_model,
             anyllm_api_key,
             anyllm_api_base,
+            anyllm_provider,
             project_dir,
         ],
         outputs=supplementary_layout_editor.get_output_components() + [supplementary_layout_status],
@@ -1060,7 +1295,6 @@ def create_supplementary_layout_ui(reasoning_model, anyllm_api_key, anyllm_api_b
     # ============================================================================
     # Step 5.3: Organize Supplementary Assets Layout for Each Scene (was Step 5.2)
     # ============================================================================
-    gr.Markdown("---")
     gr.Markdown("### Step 5.3: Organize Supplementary Assets Layout for Each Scene")
     gr.Markdown("Import supplementary assets to scenes in Blender, adjust their positions manually if needed. Then save the final layout to supplementary_layout_script_v{N}.json by clicking the '✅ Finish Supplementary Layout Formulation' button. Use the '🗑️ Delete Supplementary Assets' button to remove them and restart.")
 

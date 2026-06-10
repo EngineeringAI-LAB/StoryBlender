@@ -1083,7 +1083,7 @@ def format_asset(
     gc.disable()
     try:
         # Brief pause before starting to let any pending asyncio operations complete
-        time.sleep(3.5)
+        # time.sleep(3.5)
         
         result = _format_asset_core(
             model_info=model_info,
@@ -1096,7 +1096,7 @@ def format_asset(
         )
         
         # Brief pause after completion to let asyncio stabilize before response
-        time.sleep(3.5)
+        # time.sleep(3.5)
         
         return result
     finally:
@@ -1520,11 +1520,29 @@ def _format_asset_core(
 
     
     # === Step 9: Reset Transform ===
-    # Get the object by name from the scene (more reliable than stale reference)
-    target_obj = bpy.data.objects.get(obj_name)
-    if target_obj is None:
-        print(f"Object {obj_name} not found in scene. Using final_obj as fallback.")
-        target_obj = final_obj  # Fallback to original reference
+    # Prefer the direct reference to the just-renamed object. Looking up by name
+    # via bpy.data.objects.get(obj_name) is unsafe because if another object with
+    # the same base name already exists in bpy.data (e.g. leftover in another
+    # scene), Blender silently appends ".001" to final_obj, and the name lookup
+    # would return the unrelated object that may not be in the current view layer
+    # (causing "can't be selected because it is not in View Layer" errors).
+    target_obj = final_obj
+    # Sanity check: ensure target_obj is actually linked to the current view layer.
+    view_layer_objs = set(bpy.context.view_layer.objects)
+    if target_obj not in view_layer_objs:
+        # Fallback: try name lookup, but only accept it if it's in the view layer.
+        candidate = bpy.data.objects.get(obj_name)
+        if candidate is not None and candidate in view_layer_objs:
+            target_obj = candidate
+        else:
+            # Last-resort: link target_obj into the current scene collection.
+            current_scene = bpy.context.scene
+            if target_obj.name not in current_scene.collection.objects:
+                try:
+                    current_scene.collection.objects.link(target_obj)
+                except RuntimeError:
+                    pass
+            bpy.context.view_layer.update()
     
     # Unparent target_obj if it has a parent (keep transform)
     if target_obj.parent is not None:

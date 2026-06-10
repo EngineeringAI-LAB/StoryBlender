@@ -54,6 +54,21 @@ def get_cache_busted_file_path(original_path, cache_subdir="file_cache"):
         
         cache_path = os.path.join(cache_dir, temp_name)
         
+        # Prune older cache-busted copies of this same source file to avoid
+        # temp-dir bloat (each edit/regeneration would otherwise leave a stale copy).
+        try:
+            prefix = f"{base_name}_"
+            for old in os.listdir(cache_dir):
+                if old == temp_name:
+                    continue
+                if old.startswith(prefix) and old.endswith(ext):
+                    try:
+                        os.remove(os.path.join(cache_dir, old))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        
         # Only copy if the cache file doesn't exist or is older
         if not os.path.exists(cache_path):
             shutil.copy2(original_path, cache_path)
@@ -468,7 +483,17 @@ def show_loading_and_generate_supplementary_3d(
     final_outputs = editor_component.update_with_result(result)
     
     if result.get("success"):
-        success_msg = "✅ **Supplementary 3D assets generated successfully!** Use the 3D Model Viewer below to preview the models."
+        # Verify which assets actually have a valid main_file_path on disk.
+        failed_ids = find_failed_supplementary_3d_ids(project_dir)
+        if failed_ids:
+            failed_list = ", ".join(f"`{aid}`" for aid in failed_ids)
+            success_msg = (
+                f"⚠️ **Supplementary 3D generation finished, but {len(failed_ids)} model(s) failed** "
+                f"(missing `main_file_path` on disk): {failed_list}. "
+                "Click **♻️ Retry Failed 3D Models** to retry only these."
+            )
+        else:
+            success_msg = "✅ **Supplementary 3D assets generated successfully!** Use the 3D Model Viewer below to preview the models."
     else:
         success_msg = ""
     
@@ -509,6 +534,84 @@ def create_generate_supplementary_wrapper(editor_component):
         ):
             yield result
     return generate_wrapper
+
+
+def find_failed_supplementary_3d_ids(project_dir):
+    """Return list of asset_ids in
+    ``supplementary_assets/fetched_supplementary_assets.json`` whose
+    ``main_file_path`` is missing or does not exist on disk.
+    """
+    if not project_dir or not os.path.isabs(project_dir):
+        return []
+    json_path = os.path.join(
+        project_dir, "supplementary_assets", "fetched_supplementary_assets.json"
+    )
+    if not os.path.exists(json_path):
+        return []
+    try:
+        with open(json_path, "r") as f:
+            data = json.load(f)
+        try:
+            data = make_paths_absolute(data, project_dir)
+        except Exception as e:
+            logger.warning(
+                "Step 4: path conversion failed for fetched_supplementary_assets.json: %s",
+                e,
+            )
+    except Exception as e:
+        logger.warning("Step 4: failed to read fetched_supplementary_assets.json: %s", e)
+        return []
+
+    failed = []
+    for asset in data.get("asset_sheet", []) or []:
+        aid = asset.get("asset_id")
+        if not aid:
+            continue
+        path = asset.get("main_file_path")
+        if (not path) or (not os.path.exists(path)):
+            failed.append(aid)
+    return failed
+
+
+def create_retry_failed_supplementary_wrapper(editor_component):
+    """Factory: retry only assets in ``fetched_supplementary_assets.json``
+    whose ``main_file_path`` is missing or does not exist on disk."""
+    def retry_wrapper(
+        anyllm_api_key, anyllm_api_base, anyllm_provider, sketchfab_api_key, meshy_api_key,
+        gemini_api_key, gemini_api_base, gemini_image_model, project_dir, ai_platform,
+        meshy_model, tencent_secret_id, tencent_secret_key, vision_model,
+    ):
+        failed_ids = find_failed_supplementary_3d_ids(project_dir)
+        if not failed_ids:
+            msg = "✅ No failed supplementary 3D models found in `fetched_supplementary_assets.json`. Nothing to retry."
+            yield editor_component.update_with_result(None) + (
+                gr.update(value=msg, visible=True),
+                gr.update(visible=True),
+            )
+            return
+
+        print(f"Step 4: retrying {len(failed_ids)} failed supplementary 3D model(s): {failed_ids}")
+        for result in show_loading_and_generate_supplementary_3d(
+            editor_component,
+            anyllm_api_key,
+            anyllm_api_base,
+            anyllm_provider,
+            sketchfab_api_key,
+            meshy_api_key,
+            gemini_api_key,
+            gemini_api_base,
+            gemini_image_model,
+            project_dir,
+            ai_platform=ai_platform,
+            meshy_model=meshy_model,
+            tencent_secret_id=tencent_secret_id,
+            tencent_secret_key=tencent_secret_key,
+            vision_model=vision_model,
+            model_id_list=failed_ids,
+            force_genai=False,  # retry the full pipeline (polyhaven/sketchfab/genai)
+        ):
+            yield result
+    return retry_wrapper
 
 
 def create_regenerate_supplementary_wrapper(editor_component):
@@ -685,6 +788,7 @@ def select_supplementary_model(evt: gr.SelectData, models_state):
 def estimate_supplementary_dimensions(
     anyllm_api_key,
     anyllm_api_base,
+    anyllm_provider,
     reasoning_model,
     project_dir,
     editor_component
@@ -763,9 +867,13 @@ def estimate_supplementary_dimensions(
     
     # Generate dimension estimation
     try:
+        _provider = anyllm_provider.strip() if anyllm_provider else "gemini"
+        if not _provider:
+            _provider = "gemini"
         estimation_result = generate_asset_dimension_estimation(
             anyllm_api_key=anyllm_api_key,
             anyllm_api_base=api_base,
+            anyllm_provider=_provider,
             reasoning_model=reasoning_model,
             contents=prompt_contents,
             concept_data=supplementary_assets,
@@ -827,6 +935,7 @@ def show_loading_and_estimate_supplementary_dimensions(
     editor_component,
     anyllm_api_key,
     anyllm_api_base,
+    anyllm_provider,
     reasoning_model,
     project_dir
 ):
@@ -844,6 +953,7 @@ def show_loading_and_estimate_supplementary_dimensions(
     result = estimate_supplementary_dimensions(
         anyllm_api_key,
         anyllm_api_base,
+        anyllm_provider,
         reasoning_model,
         project_dir,
         editor_component
@@ -867,12 +977,13 @@ def show_loading_and_estimate_supplementary_dimensions(
 
 def create_estimate_supplementary_wrapper(editor_component):
     """Factory function to create an estimate wrapper bound to a specific editor component."""
-    def estimate_wrapper(anyllm_api_key, anyllm_api_base, reasoning_model, project_dir):
+    def estimate_wrapper(anyllm_api_key, anyllm_api_base, anyllm_provider, reasoning_model, project_dir):
         """Wrapper to properly yield from the generator."""
         for result in show_loading_and_estimate_supplementary_dimensions(
             editor_component,
             anyllm_api_key,
             anyllm_api_base,
+            anyllm_provider,
             reasoning_model,
             project_dir
         ):
@@ -891,6 +1002,7 @@ def format_supplementary_models(
     anyllm_api_key=None,
     vision_model="gemini/gemini-3-flash-preview",
     anyllm_api_base=None,
+    anyllm_provider=None,
     model_id_list=None
 ):
     """Format supplementary 3D models using BlenderMCPServer (orientation correction only).
@@ -951,12 +1063,16 @@ def format_supplementary_models(
     
     # Call format_assets via BlenderClient
     try:
+        _provider = anyllm_provider.strip() if anyllm_provider else "gemini"
+        if not _provider:
+            _provider = "gemini"
         response = blender_client.format_assets(
             path_to_script=temp_input_path,
             model_output_dir=formatted_output_dir,
             anyllm_api_key=anyllm_api_key,
             vision_model=vision_model,
             anyllm_api_base=anyllm_api_base,
+            anyllm_provider=_provider,
             model_id_list=model_id_list,
             output_json_filename="formatted_supplementary_assets.json"
         )
@@ -1020,6 +1136,7 @@ def show_loading_and_format_supplementary_models(
     anyllm_api_key=None,
     vision_model="gemini/gemini-3-flash-preview",
     anyllm_api_base=None,
+    anyllm_provider=None,
     model_id_list=None
 ):
     """Show loading indicator and format supplementary models."""
@@ -1043,6 +1160,7 @@ def show_loading_and_format_supplementary_models(
         anyllm_api_key=anyllm_api_key,
         vision_model=vision_model,
         anyllm_api_base=anyllm_api_base,
+        anyllm_provider=anyllm_provider,
         model_id_list=model_id_list
     )
     
@@ -1065,7 +1183,7 @@ def show_loading_and_format_supplementary_models(
 
 def create_format_supplementary_wrapper(editor_component, blender_client):
     """Factory function to create a format wrapper bound to a specific editor component and blender client."""
-    def format_wrapper(project_dir, anyllm_api_key, vision_model, anyllm_api_base, model_id_list=None):
+    def format_wrapper(project_dir, anyllm_api_key, vision_model, anyllm_api_base, anyllm_provider, model_id_list=None):
         """Wrapper to properly yield from the generator."""
         # Convert empty list to None (format all)
         if model_id_list is not None and len(model_id_list) == 0:
@@ -1077,6 +1195,7 @@ def create_format_supplementary_wrapper(editor_component, blender_client):
             anyllm_api_key=anyllm_api_key,
             vision_model=vision_model,
             anyllm_api_base=anyllm_api_base,
+            anyllm_provider=anyllm_provider,
             model_id_list=model_id_list
         ):
             yield result
@@ -1211,7 +1330,11 @@ def create_supplementary_assets_ui(
     gr.Markdown("### Step 4.2: Fetch Supplementary Assets with Concept Artist")
     gr.Markdown("Generate 3D models for all designed supplementary assets. This directly generates 3D models without image preview.")
     
-    generate_btn = gr.Button("🧊 Generate 3D Assets", variant="primary", size="lg")
+    with gr.Row():
+        generate_btn = gr.Button("🧊 Generate 3D Assets", variant="primary", size="lg", scale=2)
+        retry_failed_supplementary_btn = gr.Button(
+            "♻️ Retry Failed 3D Models", variant="secondary", size="lg", scale=1,
+        )
     
     # Loading status indicator (hidden by default)
     generate_loading_status = gr.Markdown(value="", visible=False)
@@ -1231,27 +1354,35 @@ def create_supplementary_assets_ui(
     
     # Create wrapper function for the generate generator
     generate_wrapper = create_generate_supplementary_wrapper(generate_editor)
+    retry_failed_supplementary_wrapper = create_retry_failed_supplementary_wrapper(generate_editor)
     
+    _generate_inputs = [
+        anyllm_api_key,
+        anyllm_api_base,
+        anyllm_provider,
+        sketchfab_api_key,
+        meshy_api_key,
+        gemini_api_key,
+        gemini_api_base,
+        gemini_image_model,
+        project_dir,
+        ai_platform,
+        meshy_model,
+        tencent_secret_id,
+        tencent_secret_key,
+        vision_model,
+    ]
+
     # Generate button click handler
     generate_btn.click(
         fn=generate_wrapper,
-        inputs=[
-            anyllm_api_key,
-            anyllm_api_base,
-            anyllm_provider,
-            sketchfab_api_key,
-            meshy_api_key,
-            gemini_api_key,
-            gemini_api_base,
-            gemini_image_model,
-            project_dir,
-            ai_platform,
-            meshy_model,
-            tencent_secret_id,
-            tencent_secret_key,
-            vision_model
-        ],
+        inputs=_generate_inputs,
         outputs=generate_editor.get_output_components() + [generate_loading_status, generate_btn],
+    )
+    retry_failed_supplementary_btn.click(
+        fn=retry_failed_supplementary_wrapper,
+        inputs=_generate_inputs,
+        outputs=generate_editor.get_output_components() + [generate_loading_status, retry_failed_supplementary_btn],
     )
     
     # =========================================================================
@@ -1473,7 +1604,7 @@ def create_supplementary_assets_ui(
     # Format button click handler - directly runs formatting with model_id_list
     format_btn.click(
         fn=format_wrapper,
-        inputs=[project_dir, anyllm_api_key, vision_model, anyllm_api_base, format_model_selection],
+        inputs=[project_dir, anyllm_api_key, vision_model, anyllm_api_base, anyllm_provider, format_model_selection],
         outputs=formatted_editor.get_output_components() + [format_loading_status, format_btn],
     )
     
@@ -1510,6 +1641,7 @@ def create_supplementary_assets_ui(
         inputs=[
             anyllm_api_key,
             anyllm_api_base,
+            anyllm_provider,
             reasoning_model,
             project_dir
         ],

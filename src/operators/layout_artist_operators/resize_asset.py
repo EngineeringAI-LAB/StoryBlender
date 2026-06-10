@@ -350,9 +350,13 @@ def _resize_asset_core(
 
     
     # === Step 10: Reset Transform ===
-    target_obj = bpy.data.objects.get(obj_name)
-    if target_obj is None:
-        target_obj = final_obj
+    # Use final_obj directly. Do NOT look up by obj_name via bpy.data.objects,
+    # because bpy.data.objects is global across all scenes: if an unrelated
+    # object with the same name exists (e.g., a root Empty from the imported
+    # GLB hierarchy like dead_bush.glb), Blender silently renames our mesh to
+    # "<name>.001" and the lookup returns the wrong object (which may have
+    # data=None, breaking the vertex iteration below).
+    target_obj = final_obj
     
     # Unparent target_obj if it has a parent
     if target_obj.parent is not None:

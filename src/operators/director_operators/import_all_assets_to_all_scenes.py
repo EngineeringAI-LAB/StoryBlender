@@ -135,13 +135,18 @@ def import_asset(filepath: str) -> dict:
     Returns:
         A dict containing success message and the name of the imported model.
     """
+    original_filepath = filepath
+    preprocessed_cleanup = None
     try:
         # Preprocess the file to fix common glTF issues
         filepath = _preprocess_gltf_file(filepath)
+        if filepath != original_filepath:
+            preprocessed_cleanup = filepath
         
         # Store existing objects and scenes before import
         existing_objects = set(bpy.data.objects.keys())
         existing_scenes = set(bpy.data.scenes.keys())
+        existing_images = set(bpy.data.images.keys())
         target_scene = bpy.context.scene
 
         # Import the GLB file
@@ -149,6 +154,27 @@ def import_asset(filepath: str) -> dict:
             filepath=filepath,
             bone_heuristic='TEMPERANCE'
         )
+
+        # Pack any images newly referenced from the preprocessed temp location
+        # so they persist after the temp file/dir is cleaned up.
+        if preprocessed_cleanup is not None:
+            try:
+                temp_dir_abs = os.path.abspath(os.path.dirname(preprocessed_cleanup))
+                for img_name in set(bpy.data.images.keys()) - existing_images:
+                    img = bpy.data.images.get(img_name)
+                    if img is None or img.packed_file is not None:
+                        continue
+                    try:
+                        img_abs = os.path.abspath(bpy.path.abspath(img.filepath)) if img.filepath else ""
+                    except Exception:
+                        img_abs = ""
+                    if img_abs and img_abs.startswith(temp_dir_abs):
+                        try:
+                            img.pack()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
         # Find newly imported objects BEFORE cleaning up scenes
         new_objects = set(bpy.data.objects.keys()) - existing_objects
@@ -205,6 +231,19 @@ def import_asset(filepath: str) -> dict:
             "model_name": None,
             "error": str(e)
         }
+    finally:
+        # Clean up the temp file/dir created by _preprocess_gltf_file.
+        if preprocessed_cleanup is not None:
+            try:
+                parent = os.path.dirname(preprocessed_cleanup)
+                # mkstemp (.glb) places the file directly under the system tempdir;
+                # mkdtemp (.gltf) creates a dedicated subdir. Handle both safely.
+                if os.path.abspath(parent) == os.path.abspath(tempfile.gettempdir()):
+                    os.remove(preprocessed_cleanup)
+                else:
+                    shutil.rmtree(parent, ignore_errors=True)
+            except Exception:
+                pass
 
 
 def get_asset_transform(model_name: str) -> dict:

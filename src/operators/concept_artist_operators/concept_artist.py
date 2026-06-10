@@ -9,7 +9,7 @@ metadata information:
         "character": the model is a character.
         "no_polyhaven": do not use fetch_model_from_polyhaven to download the model.
         "polyhaven": the model is downloaded from polyhaven.
-        "no_sketchfab": do not use fetch_model_from_sketchfeb to download the model.
+        "no_sketchfab": do not use fetch_model_from_sketchfab to download the model.
         "sketchfab": the model is downloaded from sketchfab.
         "no_genai": do not use text_to_image_to_3d to generate the model with AI
         "meshy": the model is generated with Meshy.
@@ -39,6 +39,7 @@ except ImportError:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from llm_completion import completion
 from google import genai
+import asyncio
 import time
 import base64
 from io import BytesIO
@@ -940,12 +941,12 @@ def fetch_model_from_polyhaven(
         return result_payload
 
 
-def fetch_model_from_sketchfeb(
+def fetch_model_from_sketchfab(
     model_description: str,
     anyllm_api_key: str,
     anyllm_api_base: str,
     anyllm_provider: str = "openai",
-    sketchfeb_api_key: str = None,
+    sketchfab_api_key: str = None,
     output_path: str = "./model.glb",
     categories: Optional[Union[str, List[str]]] = None,
     count: int = 10,
@@ -967,7 +968,7 @@ def fetch_model_from_sketchfeb(
         anyllm_api_key: API key for the LLM (used in extract and match steps).
         anyllm_api_base: Base URL for the LLM API.
         anyllm_provider: LLM provider (default: "openai").
-        sketchfeb_api_key: Sketchfab API key (Token).
+        sketchfab_api_key: Sketchfab API key (Token).
         output_path: Full path including filename and extension (default: './model.glb').
         categories: Optional category filter(s) for search.
         count: Number of results to request from search.
@@ -1000,7 +1001,7 @@ def fetch_model_from_sketchfeb(
     # 2) Search Sketchfab
     search_res = search_sketchfab_models(
         query=keywords,
-        sketchfab_api_key=sketchfeb_api_key,
+        sketchfab_api_key=sketchfab_api_key,
         categories=categories,
         count=count,
         downloadable=downloadable,
@@ -1027,7 +1028,7 @@ def fetch_model_from_sketchfeb(
     thumbnail_url = match.get("thumbnail_url")
 
     # 4) Download the model
-    main_file_path = download_sketchfab_model(sketchfab_api_key=sketchfeb_api_key, uid=uid, name=name, output_path=output_path)
+    main_file_path = download_sketchfab_model(sketchfab_api_key=sketchfab_api_key, uid=uid, name=name, output_path=output_path)
     if isinstance(main_file_path, dict) and main_file_path.get("error"):
         result_payload["error"] = f"download_sketchfab_model error: {main_file_path.get('error')}"
         return result_payload
@@ -1044,7 +1045,56 @@ def fetch_model_from_sketchfeb(
 class MeshyAPIError(RuntimeError):
     """Raised when the Meshy API returns an error or the task fails."""
 
-def generate_image(gemini_api_key, gemini_api_base, model, prompt):
+def _close_genai_client(client):
+    """Close a genai.Client's underlying aiohttp/httpx sessions to suppress
+    'Task was destroyed but it is pending' warnings from aiohttp connectors."""
+    # 1. Close sync transport
+    for sync_close in [
+        lambda: client._api_client._httpx_client.close(),
+        lambda: client.close(),
+    ]:
+        try:
+            sync_close()
+        except Exception:
+            pass
+
+    # 2. Collect async close callables from known attribute paths
+    _aclose_fns = []
+    # Path A: client.aio._api_client._httpx_async_client.aclose
+    try:
+        _aclose_fns.append(client.aio._api_client._httpx_async_client.aclose)
+    except (AttributeError, TypeError):
+        pass
+    # Path B: client.aio.aclose  (some versions expose this directly)
+    try:
+        _aclose_fns.append(client.aio.aclose)
+    except (AttributeError, TypeError):
+        pass
+    # Path C: client._api_client.aclose
+    try:
+        _aclose_fns.append(client._api_client.aclose)
+    except (AttributeError, TypeError):
+        pass
+
+    if not _aclose_fns:
+        return
+
+    # 3. Run async closes in a fresh, short-lived event loop (thread-safe)
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            for fn in _aclose_fns:
+                try:
+                    loop.run_until_complete(fn())
+                except Exception:
+                    pass
+        finally:
+            loop.close()
+    except Exception:
+        pass
+
+
+def generate_image_gemini(gemini_api_key, gemini_api_base, model, prompt):
     """
     Generate an image using Google Gemini API.
     
@@ -1066,18 +1116,146 @@ def generate_image(gemini_api_key, gemini_api_base, model, prompt):
     else:
         client = genai.Client(api_key=gemini_api_key)
     
-    # Generate content
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-    )
+    try:
+        # Generate content
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+        )
+        
+        # Extract and return the image
+        for part in response.parts:
+            if part.inline_data is not None:
+                return part.as_image()
+        
+        return None
+    finally:
+        _close_genai_client(client)
+
+
+def generate_image_openai(openai_api_key, openai_api_base, model, prompt):
+    """
+    Generate an image using OpenAI API (OpenAI-compatible images/generations endpoint).
     
-    # Extract and return the image
-    for part in response.parts:
-        if part.inline_data is not None:
-            return part.as_image()
+    Args:
+        openai_api_key: OpenAI API key for authentication
+        openai_api_base: Base URL for the OpenAI API
+        model: Model name to use (e.g., "gpt-image-2")
+        prompt: Text prompt describing the image to generate
+    
+    Returns:
+        PIL.Image: Generated image object, or None if no image was generated
+    """
+    from PIL import Image
+    
+    url = f"{openai_api_base}/v1/images/generations"
+    
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "size": "960x960"
+    })
+    headers = {
+        'Authorization': f'Bearer {openai_api_key}',
+        'Content-Type': 'application/json'
+    }
+    
+    response = requests.post(url, headers=headers, data=payload, timeout=120)
+    response_data = response.json()
+    
+    if 'data' in response_data and len(response_data['data']) > 0:
+        image_url = response_data['data'][0]['url']
+        img_response = requests.get(image_url, timeout=120)
+        img = Image.open(BytesIO(img_response.content))
+        return img
     
     return None
+
+
+def generate_image_openai_edit(openai_api_key, openai_api_base, model, prompt, image_path):
+    """
+    Edit an image using OpenAI API (OpenAI-compatible images/edits endpoint).
+    
+    Args:
+        openai_api_key: OpenAI API key for authentication
+        openai_api_base: Base URL for the OpenAI API
+        model: Model name to use (e.g., "gpt-image-2")
+        prompt: Text prompt describing the edit to apply
+        image_path: Path to the reference image file to edit
+    
+    Returns:
+        PIL.Image: Edited image object, or None if editing failed
+    """
+    from PIL import Image
+    
+    url = f"{openai_api_base}/v1/images/edits"
+    
+    headers = {
+        'Authorization': f'Bearer {openai_api_key}',
+    }
+    
+    with open(image_path, 'rb') as img_file:
+        files = {
+            'image': (os.path.basename(image_path), img_file, 'image/png'),
+        }
+        data = {
+            'model': model,
+            'prompt': prompt,
+            'n': '1',
+        }
+        response = requests.post(url, headers=headers, files=files, data=data, timeout=120)
+    
+    response_data = response.json()
+    
+    if 'data' in response_data and len(response_data['data']) > 0:
+        image_url = response_data['data'][0]['url']
+        img_response = requests.get(image_url, timeout=120)
+        img = Image.open(BytesIO(img_response.content))
+        return img
+    
+    return None
+
+
+def generate_image(
+    prompt,
+    image_gen_platform="Gemini",
+    gemini_api_key=None,
+    gemini_api_base=None,
+    gemini_image_model="gemini-3.1-flash-image-preview",
+    openai_api_key=None,
+    openai_api_base=None,
+    openai_image_model="gpt-image-2",
+):
+    """
+    Generate an image using either Gemini or OpenAI, based on image_gen_platform.
+    
+    Args:
+        prompt: Text prompt describing the image to generate
+        image_gen_platform: "Gemini" or "OpenAI"
+        gemini_api_key: Gemini API key (required if platform is Gemini)
+        gemini_api_base: Base URL for Gemini API (optional)
+        gemini_image_model: Gemini model name
+        openai_api_key: OpenAI API key (required if platform is OpenAI)
+        openai_api_base: Base URL for OpenAI API (required if platform is OpenAI)
+        openai_image_model: OpenAI model name
+    
+    Returns:
+        PIL.Image: Generated image object, or None if no image was generated
+    """
+    if image_gen_platform == "OpenAI":
+        return generate_image_openai(
+            openai_api_key=openai_api_key,
+            openai_api_base=openai_api_base,
+            model=openai_image_model,
+            prompt=prompt,
+        )
+    else:
+        return generate_image_gemini(
+            gemini_api_key=gemini_api_key,
+            gemini_api_base=gemini_api_base,
+            model=gemini_image_model,
+            prompt=prompt,
+        )
 
 
 def text_to_3d_meshy(
@@ -1601,7 +1779,23 @@ def image_to_3d_hunyuan3d(
         }
         req.from_json_string(json.dumps(params))
 
-        resp = client.SubmitHunyuanTo3DProJob(req)
+        # Retry indefinitely on concurrent-job limit errors (not a real failure,
+        # just means too many users are hitting the API). Do not count these as
+        # retries in any outer retry loop.
+        while True:
+            try:
+                resp = client.SubmitHunyuanTo3DProJob(req)
+                break
+            except TencentCloudSDKException as err:
+                err_code = getattr(err, "code", "") or ""
+                if "RequestLimitExceeded" in err_code or "JobNumExceed" in err_code:
+                    print(
+                        f"[Hunyuan3D] Concurrent job limit reached ({err_code}); "
+                        f"waiting 30s and retrying submit..."
+                    )
+                    time.sleep(30)
+                    continue
+                raise
         resp_data = json.loads(resp.to_json_string())
         
         job_id = resp_data.get("JobId")
@@ -1812,9 +2006,13 @@ def text_to_image_to_3d(
     description: str = "",
     output_dir: str = "./models",
     ai_platform: str = "Hunyuan3D",
+    image_gen_platform: str = "Gemini",
     gemini_api_key: Optional[str] = None,
     gemini_api_base: Optional[str] = None,
     gemini_image_model: str = "gemini-3-pro-image-preview",
+    openai_api_key: Optional[str] = None,
+    openai_api_base: Optional[str] = None,
+    openai_image_model: str = "gpt-image-2",
     meshy_ai_model: Optional[str] = None,
     topology: Optional[str] = None,
     target_polycount: Optional[int] = None,
@@ -1891,12 +2089,19 @@ def text_to_image_to_3d(
     if ai_platform not in ("Hunyuan3D", "Meshy"):
         raise ValueError(f"ai_platform must be one of 'Hunyuan3D' or 'Meshy', got '{ai_platform}'")
     
-    # Get Gemini API key
-    gemini_key = gemini_api_key or os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        raise RuntimeError(
-            "Missing Gemini API key. Set GEMINI_API_KEY env var or pass gemini_api_key argument."
-        )
+    # Validate image generation credentials
+    if image_gen_platform == "OpenAI":
+        if not openai_api_key:
+            raise RuntimeError("Missing OpenAI API key. Pass openai_api_key argument.")
+        if not openai_api_base:
+            raise RuntimeError("Missing OpenAI API base. Pass openai_api_base argument.")
+        gemini_key = gemini_api_key  # may be None, not needed for OpenAI
+    else:
+        gemini_key = gemini_api_key or os.getenv("GEMINI_API_KEY")
+        if not gemini_key:
+            raise RuntimeError(
+                "Missing Gemini API key. Set GEMINI_API_KEY env var or pass gemini_api_key argument."
+            )
     
     os.makedirs(output_dir, exist_ok=True)
     final_image_path = os.path.join(output_dir, f"{model_id}.png")
@@ -1916,10 +2121,14 @@ def text_to_image_to_3d(
     for attempt in range(max_retries):
         try:
             generated_image = generate_image(
+                prompt=prompt,
+                image_gen_platform=image_gen_platform,
                 gemini_api_key=gemini_key,
                 gemini_api_base=gemini_api_base,
-                model=gemini_image_model,
-                prompt=prompt,
+                gemini_image_model=gemini_image_model,
+                openai_api_key=openai_api_key,
+                openai_api_base=openai_api_base,
+                openai_image_model=openai_image_model,
             )
             
             if generated_image is None:
@@ -2119,6 +2328,10 @@ def _generate_single_image_prompt(
     max_retries: int = 5,
     threshold_llm: int = 9,
     story_summary: str = "",
+    image_gen_platform: str = "Gemini",
+    openai_api_key: Optional[str] = None,
+    openai_api_base: Optional[str] = None,
+    openai_image_model: str = "gpt-image-2",
 ) -> Dict[str, Any]:
     """
     Generate a single image prompt for a model with quality checking and retry logic.
@@ -2167,10 +2380,14 @@ def _generate_single_image_prompt(
         try:
             # Generate image
             generated_image = generate_image(
+                prompt=prompt,
+                image_gen_platform=image_gen_platform,
                 gemini_api_key=gemini_api_key,
                 gemini_api_base=gemini_api_base,
-                model=gemini_image_model,
-                prompt=prompt,
+                gemini_image_model=gemini_image_model,
+                openai_api_key=openai_api_key,
+                openai_api_base=openai_api_base,
+                openai_image_model=openai_image_model,
             )
             
             if generated_image is None:
@@ -2268,6 +2485,10 @@ def _generate_single_image_prompt_by_editing_image(
     max_retries: int = 5,
     threshold_llm: int = 8,
     story_summary: str = "",
+    image_gen_platform: str = "Gemini",
+    openai_api_key: Optional[str] = None,
+    openai_api_base: Optional[str] = None,
+    openai_image_model: str = "gpt-image-2",
 ) -> Dict[str, Any]:
     """
     Generate an image prompt for a character variant by editing a reference character image.
@@ -2319,7 +2540,7 @@ def _generate_single_image_prompt_by_editing_image(
     # Check if quality checking is enabled (anyllm credentials provided)
     enable_quality_check = anyllm_api_key
     
-    # Load the reference image
+    # Load the reference image (validate it exists)
     try:
         reference_image = Image.open(reference_image_path)
     except Exception as e:
@@ -2329,94 +2550,111 @@ def _generate_single_image_prompt_by_editing_image(
     # Create the editing prompt that preserves facial features and height
     editing_prompt = f"""Edit this image of a 3D character to create a new look. 
 Keep the facial features and height from this reference character exactly the same.
+Unless the character has change in age, for example, from a boy to a teenager, in this case you can change the face and body.
 Change the character's clothing and accessories according to this description:
 
 {prompt}
 
 Important: 
-- Maintain the same facial structure, body proportions, and overall pose (T-Pose or A-Pose)
+- Maintain the same facial structure, body proportions (unless age change is explicitly mentioned), and overall pose (T-Pose or A-Pose)
 - Modify makeup or cleanliness of the face or body as needed, but the facial structure and body shape should remain the same.
 - Keep the same art style and rendering quality
 - Keep the white background
 - Show full body, front view"""
     
-    # Create client based on whether custom base URL is provided
-    if gemini_api_base:
-        client = genai.Client(
-            api_key=gemini_api_key,
-            http_options={'base_url': gemini_api_base}
-        )
-    else:
-        client = genai.Client(api_key=gemini_api_key)
-    
-    for attempt in range(max_retries):
-        try:
-            # Generate image using image editing
-            response = client.models.generate_content(
-                model=gemini_image_model,
-                contents=[editing_prompt, reference_image],
+    # Setup platform-specific client for Gemini
+    client = None
+    if image_gen_platform != "OpenAI":
+        if gemini_api_base:
+            client = genai.Client(
+                api_key=gemini_api_key,
+                http_options={'base_url': gemini_api_base}
             )
-            
-            # Extract the generated image
-            generated_image = None
-            for part in response.parts:
-                if part.inline_data is not None:
-                    generated_image = part.as_image()
-                    break
-            
-            if generated_image is None:
-                last_error = f"Failed to generate image for {model_id} (attempt {attempt + 1})"
-                print(f"  Attempt {attempt + 1}/{max_retries}: Generation failed")
-                continue
-            
-            # Save temporary image for quality check
-            temp_image_path = os.path.join(save_path, f"{model_id}_image_prompt_temp_{attempt}.png")
-            generated_image.save(temp_image_path)
-            
-            if enable_quality_check:
-                # Check image quality
-                score = check_match_image_prompt(
-                    image_path=temp_image_path,
-                    description=check_description,
-                    anyllm_api_key=anyllm_api_key,
-                    anyllm_api_base=anyllm_api_base,
-                    vision_model=vision_model,
-                    story_summary=story_summary,
-                )
+        else:
+            client = genai.Client(api_key=gemini_api_key)
+    
+    try:
+        for attempt in range(max_retries):
+            try:
+                if image_gen_platform == "OpenAI":
+                    # Generate image using OpenAI image editing API
+                    generated_image = generate_image_openai_edit(
+                        openai_api_key=openai_api_key,
+                        openai_api_base=openai_api_base,
+                        model=openai_image_model,
+                        prompt=editing_prompt,
+                        image_path=reference_image_path,
+                    )
+                else:
+                    # Generate image using Gemini image editing
+                    response = client.models.generate_content(
+                        model=gemini_image_model,
+                        contents=[editing_prompt, reference_image],
+                    )
+                    
+                    # Extract the generated image
+                    generated_image = None
+                    for part in response.parts:
+                        if part.inline_data is not None:
+                            generated_image = part.as_image()
+                            break
                 
-                print(f"  {model_id}: Attempt {attempt + 1}/{max_retries}: Score = {score}")
-                image_prompt_scores.append(score)
+                if generated_image is None:
+                    last_error = f"Failed to generate image for {model_id} (attempt {attempt + 1})"
+                    print(f"  Attempt {attempt + 1}/{max_retries}: Generation failed")
+                    continue
                 
-                # Keep track of the best image
-                if score > best_score:
-                    # Remove previous best temp image if exists
-                    if best_image and os.path.exists(best_image) and best_image != temp_image_path:
+                # Save temporary image for quality check
+                temp_image_path = os.path.join(save_path, f"{model_id}_image_prompt_temp_{attempt}.png")
+                generated_image.save(temp_image_path)
+                
+                if enable_quality_check:
+                    # Check image quality
+                    score = check_match_image_prompt(
+                        image_path=temp_image_path,
+                        description=check_description,
+                        anyllm_api_key=anyllm_api_key,
+                        anyllm_api_base=anyllm_api_base,
+                        vision_model=vision_model,
+                        story_summary=story_summary,
+                    )
+                    
+                    print(f"  {model_id}: Attempt {attempt + 1}/{max_retries}: Score = {score}")
+                    image_prompt_scores.append(score)
+                    
+                    # Keep track of the best image
+                    if score > best_score:
+                        # Remove previous best temp image if exists
+                        if best_image and os.path.exists(best_image) and best_image != temp_image_path:
+                            try:
+                                os.remove(best_image)
+                            except Exception:
+                                pass
+                        best_score = score
+                        best_image = temp_image_path
+                    else:
+                        # Remove this temp image as it's not better
                         try:
-                            os.remove(best_image)
+                            os.remove(temp_image_path)
                         except Exception:
                             pass
-                    best_score = score
-                    best_image = temp_image_path
+                    
+                    # Early termination if we get a perfect or very good score
+                    if score >= 9:
+                        break
                 else:
-                    # Remove this temp image as it's not better
-                    try:
-                        os.remove(temp_image_path)
-                    except Exception:
-                        pass
-                
-                # Early termination if we get a perfect or very good score
-                if score >= 9:
+                    # No quality check, just use the first successful generation
+                    best_image = temp_image_path
+                    best_score = 0  # Unknown score
                     break
-            else:
-                # No quality check, just use the first successful generation
-                best_image = temp_image_path
-                best_score = 0  # Unknown score
-                break
-                
-        except Exception as e:
-            last_error = f"Error generating image for {model_id} (attempt {attempt + 1}): {str(e)}"
-            print(f"  {model_id}: Attempt {attempt + 1}/{max_retries}: Error - {str(e)}")
-            continue
+                    
+            except Exception as e:
+                last_error = f"Error generating image for {model_id} (attempt {attempt + 1}): {str(e)}"
+                print(f"  {model_id}: Attempt {attempt + 1}/{max_retries}: Error - {str(e)}")
+                continue
+    finally:
+        if client is not None:
+            _close_genai_client(client)
     
     # Finalize result
     result["image_prompt_scores"] = image_prompt_scores
@@ -2457,6 +2695,10 @@ def fetch_image_prompt(
     vision_model: str = "gemini/gemini-2.5-flash-preview",
     max_retries: int = 5,
     threshold_llm: int = 8,
+    image_gen_platform: str = "Gemini",
+    openai_api_key: Optional[str] = None,
+    openai_api_base: Optional[str] = None,
+    openai_image_model: str = "gpt-image-2",
 ) -> Dict[str, Any]:
     """
     Generate image prompts for 3D assets in parallel.
@@ -2534,6 +2776,10 @@ def fetch_image_prompt(
     if base_assets_to_process:
         print(f"\n{'='*80}")
         print(f"Phase 1: Generating {len(base_assets_to_process)} base asset image prompts...")
+        if image_gen_platform == "Gemini":
+            print(f"Using Gemini image model: {gemini_image_model}")
+        elif image_gen_platform == "OpenAI":
+            print(f"Using OpenAI image model: {openai_image_model}")
         print(f"{'='*80}")
         
         with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
@@ -2553,6 +2799,10 @@ def fetch_image_prompt(
                     max_retries,
                     threshold_llm,
                     story_summary,
+                    image_gen_platform,
+                    openai_api_key,
+                    openai_api_base,
+                    openai_image_model,
                 ): asset_id
                 for asset_id, prompt, description, _ in base_assets_to_process
             }
@@ -2639,6 +2889,10 @@ def fetch_image_prompt(
                     max_retries,
                     threshold_llm,
                     story_summary,
+                    image_gen_platform,
+                    openai_api_key,
+                    openai_api_base,
+                    openai_image_model,
                 )
                 future_to_model[future] = asset_id
             
@@ -3105,12 +3359,12 @@ def _fetch_single_model_retrieval_only(
     if not skip_sketchfab:
         # Try Sketchfab
         try:
-            sketchfab_result = fetch_model_from_sketchfeb(
+            sketchfab_result = fetch_model_from_sketchfab(
                 model_description=description,
                 anyllm_api_key=anyllm_api_key,
                 anyllm_api_base=anyllm_api_base,
                 anyllm_provider=anyllm_provider,
-                sketchfeb_api_key=sketchfab_api_key,
+                sketchfab_api_key=sketchfab_api_key,
                 output_path=output_path,
                 vision_model=vision_model,
             )
@@ -3394,12 +3648,12 @@ def _fetch_single_model(
     if not skip_sketchfab:
         # Try Sketchfab first
         try:
-            sketchfab_result = fetch_model_from_sketchfeb(
+            sketchfab_result = fetch_model_from_sketchfab(
                 model_description=description,
                 anyllm_api_key=anyllm_api_key,
                 anyllm_api_base=anyllm_api_base,
                 anyllm_provider=anyllm_provider,
-                sketchfeb_api_key=sketchfab_api_key,
+                sketchfab_api_key=sketchfab_api_key,
                 output_path=output_path,
                 vision_model=vision_model,
             )

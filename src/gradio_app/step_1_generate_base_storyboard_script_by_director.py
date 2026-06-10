@@ -128,8 +128,15 @@ def show_loading_and_generate(editor_component, reasoning_model, anyllm_api_key,
     
     # Return final result with editor component updated
     final_outputs = editor_component.update_with_result(result)
+    
+    # Show success message if generation succeeded
+    if result.get("success"):
+        success_msg = "✅ **Storyboard generated successfully!** You can review the JSON below and proceed to the next step."
+    else:
+        success_msg = ""  # Error message is shown in the editor
+    
     final_state = (
-        gr.update(visible=False),  # Hide loading
+        gr.update(value=success_msg, visible=bool(success_msg)),  # Show success tip
         gr.update(visible=False),  # story_input hidden
         gr.update(visible=False),  # Hide story_resume_btn
         gr.update(visible=True),   # Show story_toggle_btn

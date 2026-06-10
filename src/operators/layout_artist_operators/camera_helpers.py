@@ -96,7 +96,7 @@ def _call_llm_with_retry(
     max_retries: int = 3,
     retry_delays: list = None,
 ):
-    """Call the LLM with retry logic and Gemini client_args handling.
+    """Call the LLM with retry logic.
     
     Args:
         messages: Chat messages to send.

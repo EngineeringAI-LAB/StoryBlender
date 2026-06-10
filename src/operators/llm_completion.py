@@ -42,10 +42,16 @@ def _close_client(llm):
     if client is None:
         return
 
-    # Close sync httpx session
+    # Close sync httpx session (may actually be an async coroutine)
     if hasattr(client, 'close'):
         try:
-            client.close()
+            result = client.close()
+            if asyncio.iscoroutine(result):
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(result)
+                finally:
+                    loop.close()
         except Exception:
             pass
 
@@ -72,6 +78,27 @@ def _close_client(llm):
         pass
 
 
+def _normalize_api_base(api_base, provider_key):
+    """Ensure api_base ends with /v1 for OpenAI-compatible providers.
+
+    The any_llm SDK passes api_base directly to AsyncOpenAI(base_url=...),
+    which expects the version path (e.g. https://host/v1).  Many proxy
+    services only store the bare domain in config.
+    """
+    if api_base is None:
+        return None
+    try:
+        from any_llm.providers.openai.base import BaseOpenAIProvider
+        provider_cls = AnyLLM.get_provider_class(provider_key)
+        if issubclass(provider_cls, BaseOpenAIProvider):
+            api_base = api_base.rstrip('/')
+            if not api_base.endswith('/v1'):
+                api_base += '/v1'
+    except Exception:
+        pass
+    return api_base
+
+
 def completion(model, messages, *, provider=None, api_key=None, api_base=None, client_args=None, **kwargs):
     """Drop-in replacement for any_llm.completion with proper session cleanup."""
     if provider is None:
@@ -80,32 +107,24 @@ def completion(model, messages, *, provider=None, api_key=None, api_base=None, c
         provider_key = LLMProvider.from_string(provider)
         model_id = model
 
-    # For Gemini provider: auto-build proxy client_args and disable AFC
-    if provider_key == LLMProvider.from_string("gemini"):
-        # Auto-build proxy config (base_url + x-goog-api-key header) when api_base
-        # is provided but client_args doesn't already contain a base_url.
-        if api_base:
-            if client_args is None:
-                client_args = {}
-            http_options = client_args.setdefault("http_options", {})
-            if "base_url" not in http_options:
-                http_options["base_url"] = api_base
-                http_options.setdefault("headers", {})["x-goog-api-key"] = api_key
-
-        # Disable Automatic Function Calling (AFC)
-        try:
-            from google.genai import types
-            if "automatic_function_calling" not in kwargs:
-                kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
-            if "tool_config" not in kwargs:
-                kwargs["tool_config"] = types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(mode="NONE")
-                )
-        except ImportError:
-            pass
-
+    api_base = _normalize_api_base(api_base, provider_key)
     llm = AnyLLM.create(provider_key, api_key=api_key, api_base=api_base, **(client_args or {}))
     try:
         return llm.completion(model=model_id, messages=messages, **kwargs)
     finally:
         _close_client(llm)
+
+
+if __name__ == "__main__":
+    from operators.api_keys import anyllm_api_key, anyllm_api_base
+
+    response = completion(
+        model="gpt-5.4-high",
+        provider="openai",
+        messages=[{"role": "user", "content": "Who are you?"}],
+        api_key=anyllm_api_key,
+        api_base=anyllm_api_base,
+    )
+    print("Response:", response)
+    print("Response type:", type(response))
+    print("Response content:", response.choices[0].message.content)

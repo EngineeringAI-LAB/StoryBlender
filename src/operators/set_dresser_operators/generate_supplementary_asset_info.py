@@ -301,7 +301,6 @@ def generate_json_response(
                 response_format=response_schema,
                 api_key=api_key,
                 api_base=base_url,
-                client_args={"http_options": {"timeout": 300000}}
             )
             gc.collect()
 

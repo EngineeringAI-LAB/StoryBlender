@@ -238,6 +238,10 @@ def generate_image_prompts(
     anyllm_api_key=None,
     anyllm_api_base=None,
     vision_model="gemini/gemini-2.5-flash-preview",
+    image_gen_platform="Gemini",
+    openai_api_key=None,
+    openai_api_base=None,
+    openai_image_model="gpt-image-2",
 ):
     """Generate image prompts for 3D assets.
     
@@ -301,6 +305,9 @@ def generate_image_prompts(
     # Set API base to None if empty string
     gemini_base = gemini_api_base if gemini_api_base and gemini_api_base.strip() else None
     
+    # Set OpenAI API base to None if empty string
+    openai_base = openai_api_base if openai_api_base and openai_api_base.strip() else None
+    
     try:
         result = fetch_image_prompt(
             director_result=director_result,
@@ -313,6 +320,10 @@ def generate_image_prompts(
             anyllm_api_key=anyllm_api_key,
             anyllm_api_base=anyllm_api_base,
             vision_model=vision_model,
+            image_gen_platform=image_gen_platform,
+            openai_api_key=openai_api_key,
+            openai_api_base=openai_base,
+            openai_image_model=openai_image_model,
         )
         
         return {
@@ -335,6 +346,10 @@ def show_loading_and_generate_image_prompts(
     anyllm_api_key=None,
     anyllm_api_base=None,
     vision_model="gemini/gemini-2.5-flash-preview",
+    image_gen_platform="Gemini",
+    openai_api_key=None,
+    openai_api_base=None,
+    openai_image_model="gpt-image-2",
 ):
     """Show loading indicator and generate image prompts.
     
@@ -362,6 +377,10 @@ def show_loading_and_generate_image_prompts(
         anyllm_api_key,
         anyllm_api_base,
         vision_model,
+        image_gen_platform,
+        openai_api_key,
+        openai_api_base,
+        openai_image_model,
     )
     
     # Final state
@@ -410,6 +429,21 @@ def get_cache_busted_file_path(original_path, cache_subdir="file_cache"):
         os.makedirs(cache_dir, exist_ok=True)
         
         cache_path = os.path.join(cache_dir, temp_name)
+        
+        # Prune older cache-busted copies of this same source file to avoid
+        # temp-dir bloat (each edit/regeneration would otherwise leave a stale copy).
+        try:
+            prefix = f"{base_name}_"
+            for old in os.listdir(cache_dir):
+                if old == temp_name:
+                    continue
+                if old.startswith(prefix) and old.endswith(ext):
+                    try:
+                        os.remove(os.path.join(cache_dir, old))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         
         # Only copy if the cache file doesn't exist or is older
         if not os.path.exists(cache_path):
@@ -708,7 +742,17 @@ def show_loading_and_generate_3d_from_images(
     
     # Show success message with tip if generation succeeded
     if result.get("success"):
-        success_msg = "✅ **3D assets generated successfully!** You can use the **3D Model Viewer** below to preview the models and check if you're satisfied with them."
+        # Verify which assets actually have a valid main_file_path on disk.
+        failed_ids = find_failed_3d_model_ids(project_dir)
+        if failed_ids:
+            failed_list = ", ".join(f"`{aid}`" for aid in failed_ids)
+            success_msg = (
+                f"⚠️ **3D generation finished, but {len(failed_ids)} model(s) failed** "
+                f"(missing `main_file_path` on disk): {failed_list}. "
+                "Click **♻️ Retry Failed 3D Models** to retry only these."
+            )
+        else:
+            success_msg = "✅ **3D assets generated successfully!** You can use the **3D Model Viewer** below to preview the models and check if you're satisfied with them."
     else:
         success_msg = ""  # Error message is shown in the editor
     
@@ -738,6 +782,68 @@ def create_generate_3d_wrapper(editor_component):
     return generate_wrapper
 
 
+def find_failed_image_prompt_ids(project_dir):
+    """Return list of asset_ids in ``models/image_prompt.json`` whose
+    ``image_prompt_path`` is missing/invalid or that carry ``image_prompt_error``.
+    """
+    if not project_dir or not os.path.isabs(project_dir):
+        return []
+    json_path = os.path.join(project_dir, "models", "image_prompt.json")
+    if not os.path.exists(json_path):
+        return []
+    try:
+        with open(json_path, "r") as f:
+            data = json.load(f)
+        try:
+            data = make_paths_absolute(data, project_dir)
+        except Exception as e:
+            logger.warning("Step 2: path conversion failed for image_prompt.json: %s", e)
+    except Exception as e:
+        logger.warning("Step 2: failed to read image_prompt.json: %s", e)
+        return []
+
+    failed = []
+    for asset in data.get("asset_sheet", []) or []:
+        aid = asset.get("asset_id")
+        if not aid:
+            continue
+        path = asset.get("image_prompt_path")
+        if (not path) or (not os.path.exists(path)) or asset.get("image_prompt_error"):
+            failed.append(aid)
+    return failed
+
+
+def find_failed_3d_model_ids(project_dir):
+    """Return list of asset_ids in ``models/concept_artist.json`` whose
+    ``main_file_path`` is missing or does not exist on disk.
+    """
+    if not project_dir or not os.path.isabs(project_dir):
+        return []
+    json_path = os.path.join(project_dir, "models", "concept_artist.json")
+    if not os.path.exists(json_path):
+        return []
+    try:
+        with open(json_path, "r") as f:
+            data = json.load(f)
+        try:
+            data = make_paths_absolute(data, project_dir)
+        except Exception as e:
+            logger.warning("Step 2: path conversion failed for concept_artist.json: %s", e)
+    except Exception as e:
+        logger.warning("Step 2: failed to read concept_artist.json: %s", e)
+        return []
+
+    failed = []
+    for asset in data.get("asset_sheet", []) or []:
+        aid = asset.get("asset_id")
+        if not aid:
+            continue
+        path = asset.get("main_file_path")
+        if (not path) or (not os.path.exists(path)):
+            failed.append(aid)
+    return failed
+
+
 def create_regenerate_3d_wrapper(editor_component):
     """Factory function to create a regenerate 3D wrapper bound to a specific editor component."""
     def regenerate_wrapper(meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id, tencent_secret_key, model_id_list):
@@ -764,9 +870,39 @@ def create_regenerate_3d_wrapper(editor_component):
     return regenerate_wrapper
 
 
+def create_retry_failed_3d_wrapper(editor_component):
+    """Factory: retry only assets in ``concept_artist.json`` whose
+    ``main_file_path`` is missing or does not exist on disk."""
+    def retry_wrapper(meshy_api_key, meshy_model, project_dir, ai_platform,
+                      tencent_secret_id, tencent_secret_key):
+        failed_ids = find_failed_3d_model_ids(project_dir)
+        if not failed_ids:
+            msg = "✅ No failed 3D models found in `concept_artist.json`. Nothing to retry."
+            yield editor_component.update_with_result(None) + (
+                gr.update(value=msg, visible=True),
+                gr.update(visible=True),
+            )
+            return
+
+        print(f"Step 2: retrying {len(failed_ids)} failed 3D model(s): {failed_ids}")
+        for result in show_loading_and_generate_3d_from_images(
+            editor_component,
+            meshy_api_key,
+            meshy_model,
+            project_dir,
+            ai_platform=ai_platform,
+            tencent_secret_id=tencent_secret_id,
+            tencent_secret_key=tencent_secret_key,
+            model_id_list=failed_ids,
+        ):
+            yield result
+    return retry_wrapper
+
+
 def estimate_asset_dimensions(
     anyllm_api_key,
     anyllm_api_base,
+    anyllm_provider,
     reasoning_model,
     project_dir,
     editor_component
@@ -821,9 +957,13 @@ def estimate_asset_dimensions(
     
     # Generate dimension estimation
     try:
+        _provider = anyllm_provider.strip() if anyllm_provider else "gemini"
+        if not _provider:
+            _provider = "gemini"
         estimation_result = generate_asset_dimension_estimation(
             anyllm_api_key=anyllm_api_key,
             anyllm_api_base=api_base,
+            anyllm_provider=_provider,
             reasoning_model=reasoning_model,
             contents=prompt_contents,
             concept_data=concept_data,
@@ -875,6 +1015,7 @@ def show_loading_and_estimate_dimensions(
     editor_component,
     anyllm_api_key,
     anyllm_api_base,
+    anyllm_provider,
     reasoning_model,
     project_dir
 ):
@@ -892,6 +1033,7 @@ def show_loading_and_estimate_dimensions(
     result = estimate_asset_dimensions(
         anyllm_api_key,
         anyllm_api_base,
+        anyllm_provider,
         reasoning_model,
         project_dir,
         editor_component
@@ -899,8 +1041,15 @@ def show_loading_and_estimate_dimensions(
     
     # Return final result
     final_outputs = editor_component.update_with_result(result)
+    
+    # Show success message with tip if estimation succeeded
+    if result.get("success"):
+        success_msg = "✅ **Asset dimensions estimated successfully!** You can proceed to the next step."
+    else:
+        success_msg = ""  # Error message is shown in the editor
+    
     final_state = (
-        gr.update(visible=False),  # Hide loading
+        gr.update(value=success_msg, visible=bool(success_msg)),  # Show success tip
         gr.update(visible=True),   # Show estimate button
     )
     
@@ -909,12 +1058,13 @@ def show_loading_and_estimate_dimensions(
 
 def create_estimate_wrapper(editor_component):
     """Factory function to create an estimate wrapper bound to a specific editor component."""
-    def estimate_wrapper(anyllm_api_key, anyllm_api_base, reasoning_model, project_dir):
+    def estimate_wrapper(anyllm_api_key, anyllm_api_base, anyllm_provider, reasoning_model, project_dir):
         """Wrapper to properly yield from the generator."""
         for result in show_loading_and_estimate_dimensions(
             editor_component,
             anyllm_api_key,
             anyllm_api_base,
+            anyllm_provider,
             reasoning_model,
             project_dir
         ):
@@ -929,6 +1079,7 @@ def format_3d_models(
     anyllm_api_key=None,
     vision_model="gemini/gemini-3-flash-preview",
     anyllm_api_base=None,
+    anyllm_provider=None,
     model_id_list=None
 ):
     """Format 3D models using BlenderMCPServer.
@@ -989,12 +1140,16 @@ def format_3d_models(
     
     # Call format_assets via BlenderClient
     try:
+        _provider = anyllm_provider.strip() if anyllm_provider else "gemini"
+        if not _provider:
+            _provider = "gemini"
         response = blender_client.format_assets(
             path_to_script=temp_input_path,
             model_output_dir=formatted_output_dir,
             anyllm_api_key=anyllm_api_key,
             vision_model=vision_model,
             anyllm_api_base=anyllm_api_base,
+            anyllm_provider=_provider,
             model_id_list=model_id_list
         )
         
@@ -1057,6 +1212,7 @@ def show_loading_and_format_models(
     anyllm_api_key=None,
     vision_model="gemini/gemini-3-flash-preview",
     anyllm_api_base=None,
+    anyllm_provider=None,
     model_id_list=None
 ):
     """Show loading indicator and format assets."""
@@ -1080,6 +1236,7 @@ def show_loading_and_format_models(
         anyllm_api_key=anyllm_api_key,
         vision_model=vision_model,
         anyllm_api_base=anyllm_api_base,
+        anyllm_provider=anyllm_provider,
         model_id_list=model_id_list
     )
     
@@ -1102,7 +1259,7 @@ def show_loading_and_format_models(
 
 def create_format_wrapper(editor_component, blender_client):
     """Factory function to create a format wrapper bound to a specific editor component and blender client."""
-    def format_wrapper(project_dir, anyllm_api_key, vision_model, anyllm_api_base, model_id_list=None):
+    def format_wrapper(project_dir, anyllm_api_key, vision_model, anyllm_api_base, anyllm_provider, model_id_list=None):
         """Wrapper to properly yield from the generator."""
         # Convert empty list to None (format all)
         if model_id_list is not None and len(model_id_list) == 0:
@@ -1114,6 +1271,7 @@ def create_format_wrapper(editor_component, blender_client):
             anyllm_api_key=anyllm_api_key,
             vision_model=vision_model,
             anyllm_api_base=anyllm_api_base,
+            anyllm_provider=anyllm_provider,
             model_id_list=model_id_list
         ):
             yield result
@@ -1296,7 +1454,11 @@ def create_3d_assets_ui(
     vision_model,
     ai_platform,
     tencent_secret_id,
-    tencent_secret_key
+    tencent_secret_key,
+    image_gen_platform=None,
+    openai_api_key=None,
+    openai_api_base=None,
+    openai_image_model=None,
 ):
     """Create the Step 2: Fetch and Format Core 3D Assets by Concept Artist UI section.
     
@@ -1331,6 +1493,7 @@ def create_3d_assets_ui(
     
     with gr.Row():
         generate_image_btn = gr.Button("🎨 Generate Image Preview", variant="primary", size="lg", scale=2)
+        retry_failed_images_btn = gr.Button("♻️ Retry Failed Images", variant="secondary", size="lg", scale=1)
         display_images_btn = gr.Button("🔍 Display Images", variant="secondary", size="lg", scale=1)
         toggle_image_viewer_btn = gr.Button("👁 Hide/Show Image Viewer", variant="secondary", size="lg", scale=1)
     
@@ -1415,7 +1578,7 @@ def create_3d_assets_ui(
         )
     
     # Generate image prompts button handler with auto-refresh
-    def generate_image_prompts_handler(gemini_api_key, gemini_api_base, gemini_image_model, project_dir_val, anyllm_api_key, anyllm_api_base, vision_model, current_images_state):
+    def generate_image_prompts_handler(gemini_api_key, gemini_api_base, gemini_image_model, project_dir_val, anyllm_api_key, anyllm_api_base, vision_model, image_gen_platform_val, openai_api_key, openai_api_base, openai_image_model_val, current_images_state):
         # Initial loading - hide viewer updates during loading
         yield (
             gr.update(value="🔄 **Generating image prompts...** This may take a few minutes.", visible=True),  # loading_status
@@ -1441,6 +1604,10 @@ def create_3d_assets_ui(
             anyllm_api_key,
             anyllm_api_base,
             vision_model,
+            image_gen_platform_val,
+            openai_api_key,
+            openai_api_base,
+            openai_image_model_val,
         )
         
         # Final state with auto-refresh of image viewer
@@ -1460,7 +1627,7 @@ def create_3d_assets_ui(
     
     generate_image_btn.click(
         fn=generate_image_prompts_handler,
-        inputs=[gemini_api_key, gemini_api_base, gemini_image_model, project_dir, anyllm_api_key, anyllm_api_base, vision_model, images_state],
+        inputs=[gemini_api_key, gemini_api_base, gemini_image_model, project_dir, anyllm_api_key, anyllm_api_base, vision_model, image_gen_platform, openai_api_key, openai_api_base, openai_image_model, images_state],
         outputs=[image_gen_loading_status, generate_image_btn, regenerate_btn,
                  image_viewer, image_preview_status, image_buttons, image_viewer_container,
                  images_state, selected_for_regen, regen_selection, image_viewer_visible]
@@ -1514,7 +1681,7 @@ def create_3d_assets_ui(
     )
     
     # Regenerate selected button handler with auto-refresh
-    def regenerate_selected_handler(gemini_api_key, gemini_api_base, gemini_image_model, project_dir_val, selected_ids, anyllm_api_key, anyllm_api_base, vision_model, current_images_state):
+    def regenerate_selected_handler(gemini_api_key, gemini_api_base, gemini_image_model, project_dir_val, selected_ids, anyllm_api_key, anyllm_api_base, vision_model, image_gen_platform_val, openai_api_key, openai_api_base, openai_image_model_val, current_images_state):
         # Build empty viewer updates for error case
         empty_viewer_updates = (
             gr.update(),  # image_viewer
@@ -1552,6 +1719,10 @@ def create_3d_assets_ui(
             anyllm_api_key,
             anyllm_api_base,
             vision_model,
+            image_gen_platform_val,
+            openai_api_key,
+            openai_api_base,
+            openai_image_model_val,
         )
         
         # Final state with auto-refresh
@@ -1591,19 +1762,114 @@ def create_3d_assets_ui(
     
     regenerate_btn.click(
         fn=regenerate_selected_handler,
-        inputs=[gemini_api_key, gemini_api_base, gemini_image_model, project_dir, regen_selection, anyllm_api_key, anyllm_api_base, vision_model, images_state],
+        inputs=[gemini_api_key, gemini_api_base, gemini_image_model, project_dir, regen_selection, anyllm_api_key, anyllm_api_base, vision_model, image_gen_platform, openai_api_key, openai_api_base, openai_image_model, images_state],
         outputs=[image_gen_loading_status, generate_image_btn, regenerate_btn,
                  image_viewer, image_preview_status, image_buttons, image_viewer_container,
                  images_state, selected_for_regen, regen_selection, image_viewer_visible]
     )
-    
+
+    # Retry Failed Images: auto-discover assets in image_prompt.json that have
+    # no image_prompt_path / missing file / image_prompt_error and re-run only them.
+    def retry_failed_images_handler(gemini_api_key_v, gemini_api_base_v, gemini_image_model_v,
+                                    project_dir_val, anyllm_api_key_v, anyllm_api_base_v,
+                                    vision_model_v, image_gen_platform_val,
+                                    openai_api_key_v, openai_api_base_v, openai_image_model_val,
+                                    current_images_state):
+        empty_viewer_updates = (
+            gr.update(),  # image_viewer
+            gr.update(),  # image_preview_status
+            gr.update(),  # image_buttons
+            gr.update(),  # image_viewer_container
+            current_images_state,
+            [],
+            gr.update(),
+            gr.update(),
+        )
+
+        failed_ids = find_failed_image_prompt_ids(project_dir_val)
+        if not failed_ids:
+            yield (
+                gr.update(value="✅ No failed images found in `image_prompt.json`. Nothing to retry.", visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+            ) + empty_viewer_updates
+            return
+
+        # Initial loading
+        yield (
+            gr.update(value=f"🔄 **Retrying {len(failed_ids)} failed image(s)...** This may take a few minutes.", visible=True),
+            gr.update(visible=False),
+            gr.update(visible=False),
+        ) + empty_viewer_updates
+
+        result = generate_image_prompts(
+            gemini_api_key_v,
+            gemini_api_base_v,
+            gemini_image_model_v,
+            project_dir_val,
+            failed_ids,
+            anyllm_api_key_v,
+            anyllm_api_base_v,
+            vision_model_v,
+            image_gen_platform_val,
+            openai_api_key_v,
+            openai_api_base_v,
+            openai_image_model_val,
+        )
+
+        if result.get("success"):
+            success_msg = (
+                f"✅ **Retried {len(failed_ids)} failed image(s).** "
+                "Review below; some may still have failed if the API errored again."
+            )
+        else:
+            success_msg = result.get("error", "")
+
+        viewer_refresh = refresh_image_viewer_with_selection(project_dir_val, current_images_state)
+
+        # If possible, focus viewer on the first retried image
+        new_images = viewer_refresh[4]
+        if new_images:
+            for model_id, image_path, has_error in new_images:
+                if model_id in failed_ids and image_path:
+                    status_suffix = " ⚠️ (has error)" if has_error else ""
+                    viewer_refresh = (
+                        gr.update(value=image_path),
+                        gr.update(value=f"Showing: **{model_id}**{status_suffix} ({len(new_images)} images available)"),
+                        viewer_refresh[2],
+                        viewer_refresh[3],
+                        new_images,
+                        viewer_refresh[5],
+                        viewer_refresh[6],
+                        viewer_refresh[7],
+                    )
+                    break
+
+        yield (
+            gr.update(value=success_msg, visible=True),
+            gr.update(visible=True),
+            gr.update(visible=True),
+        ) + viewer_refresh
+
+    retry_failed_images_btn.click(
+        fn=retry_failed_images_handler,
+        inputs=[gemini_api_key, gemini_api_base, gemini_image_model, project_dir,
+                anyllm_api_key, anyllm_api_base, vision_model, image_gen_platform,
+                openai_api_key, openai_api_base, openai_image_model, images_state],
+        outputs=[image_gen_loading_status, generate_image_btn, regenerate_btn,
+                 image_viewer, image_preview_status, image_buttons, image_viewer_container,
+                 images_state, selected_for_regen, regen_selection, image_viewer_visible]
+    )
+
     # =========================================================================
     # Step 2.2: Generate 3D Assets
     # =========================================================================
     gr.Markdown("### Step 2.2: Generate 3D Assets")
     gr.Markdown("Generate 3D models from the image prompts using Meshy API. This step may take 10-20 minutes.")
     
-    generate_3d_btn = gr.Button("🧊 Generate 3D Assets", variant="primary", size="lg")
+    with gr.Row():
+        generate_3d_btn = gr.Button("🧊 Generate 3D Assets", variant="primary", size="lg", scale=2)
+        retry_failed_3d_btn = gr.Button("♻️ Retry Failed 3D Models", variant="secondary", size="lg", scale=1)
     
     # Loading status indicator (hidden by default)
     loading_status_3d = gr.Markdown(value="", visible=False)
@@ -1623,12 +1889,18 @@ def create_3d_assets_ui(
     
     # Create wrapper function for the 3D generator
     generate_3d_wrapper = create_generate_3d_wrapper(assets_editor)
+    retry_failed_3d_wrapper = create_retry_failed_3d_wrapper(assets_editor)
     
     # Generate 3D button click handler
     generate_3d_btn.click(
         fn=generate_3d_wrapper,
         inputs=[meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id, tencent_secret_key],
         outputs=assets_editor.get_output_components() + [loading_status_3d, generate_3d_btn],
+    )
+    retry_failed_3d_btn.click(
+        fn=retry_failed_3d_wrapper,
+        inputs=[meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id, tencent_secret_key],
+        outputs=assets_editor.get_output_components() + [loading_status_3d, retry_failed_3d_btn],
     )
     
     # =========================================================================
@@ -1719,7 +1991,7 @@ def create_3d_assets_ui(
     # Format button click handler - directly runs formatting with model_id_list
     format_btn.click(
         fn=format_wrapper,
-        inputs=[project_dir, anyllm_api_key, vision_model, anyllm_api_base, format_model_selection],
+        inputs=[project_dir, anyllm_api_key, vision_model, anyllm_api_base, anyllm_provider, format_model_selection],
         outputs=formatted_editor.get_output_components() + [format_loading_status, format_btn],
     )
     
@@ -1756,6 +2028,7 @@ def create_3d_assets_ui(
         inputs=[
             anyllm_api_key,
             anyllm_api_base,
+            anyllm_provider,
             reasoning_model,
             project_dir,
         ],

@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 id = "storyblender"
 version = "1.0.0"
 name = "StoryBlender"
-tagline = "Automated 3D Storyboard Generation with AI3"
+tagline = "Automated 3D Storyboard Generation with AI"
 maintainer = "StoryBlender"
 # Supported types: "add-on", "theme"
 type = "add-on"
@@ -38,7 +38,6 @@ license = [
 # # Optional: bundle 3rd party Python modules.
 # # https://docs.blender.org/manual/en/dev/advanced/extensions/python_wheels.html
 wheels = [
-  "./wheels/aiofiles-24.1.0-py3-none-any.whl",
   "./wheels/aiofiles-25.1.0-py3-none-any.whl",
   "./wheels/aiohappyeyeballs-2.6.1-py3-none-any.whl",
   "./wheels/aiohttp-3.13.3-cp311-cp311-macosx_11_0_arm64.whl",
@@ -48,7 +47,6 @@ wheels = [
   "./wheels/annotated_doc-0.0.4-py3-none-any.whl",
   "./wheels/annotated_types-0.7.0-py3-none-any.whl",
   "./wheels/anthropic-0.86.0-py3-none-any.whl",
-  "./wheels/any_llm_sdk-0.7.0-py3-none-any.whl",
   "./wheels/any_llm_sdk-1.13.0-py3-none-any.whl",
   "./wheels/anyio-4.13.0-py3-none-any.whl",
   "./wheels/asttokens-3.0.1-py3-none-any.whl",
@@ -83,7 +81,6 @@ wheels = [
   "./wheels/docstring_parser-0.17.0-py3-none-any.whl",
   "./wheels/exceptiongroup-1.3.1-py3-none-any.whl",
   "./wheels/executing-2.2.1-py2.py3-none-any.whl",
-  "./wheels/fastapi-0.125.0-py3-none-any.whl",
   "./wheels/fastapi-0.135.2-py3-none-any.whl",
   "./wheels/fastembed-0.8.0-py3-none-any.whl",
   "./wheels/fastuuid-0.14.0-cp311-cp311-macosx_11_0_arm64.whl",
@@ -98,13 +95,11 @@ wheels = [
   "./wheels/frozenlist-1.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl",
   "./wheels/frozenlist-1.8.0-cp311-cp311-win_amd64.whl",
   "./wheels/fsspec-2026.2.0-py3-none-any.whl",
-  "./wheels/genai-1.0.3-py3-none-any.whl",
   "./wheels/genai-2.1.0-py3-none-any.whl",
   "./wheels/gltflib-1.0.13-py3-none-any.whl",
   "./wheels/google-3.0.0-py2.py3-none-any.whl",
   "./wheels/google_api_core-2.30.0-py3-none-any.whl",
   "./wheels/google_api_python_client-2.193.0-py3-none-any.whl",
-  "./wheels/google_auth-2.47.0-py3-none-any.whl",
   "./wheels/google_auth-2.49.1-py3-none-any.whl",
   "./wheels/google_auth_httplib2-0.3.0-py3-none-any.whl",
   "./wheels/google_genai-1.68.0-py3-none-any.whl",
@@ -135,9 +130,7 @@ wheels = [
   "./wheels/jinja2-3.1.6-py3-none-any.whl",
   "./wheels/jiter-0.13.0-cp311-cp311-macosx_11_0_arm64.whl",
   "./wheels/jiter-0.13.0-cp311-cp311-win_amd64.whl",
-  "./wheels/jsonschema-4.17.3-py3-none-any.whl",
   "./wheels/jsonschema-4.26.0-py3-none-any.whl",
-  "./wheels/jsonschema_specifications-2023.3.3-py3-none-any.whl",
   "./wheels/jsonschema_specifications-2025.9.1-py3-none-any.whl",
   "./wheels/kiwisolver-1.5.0-cp311-cp311-macosx_11_0_arm64.whl",
   "./wheels/kiwisolver-1.5.0-cp311-cp311-win_amd64.whl",
@@ -153,7 +146,6 @@ wheels = [
   "./wheels/mdurl-0.1.2-py3-none-any.whl",
   "./wheels/mmh3-5.2.1-cp311-cp311-macosx_11_0_arm64.whl",
   "./wheels/mmh3-5.2.1-cp311-cp311-win_amd64.whl",
-  "./wheels/moviepy-0.2.3.1-py2.py3-none-any.whl",
   "./wheels/moviepy-2.2.1-py3-none-any.whl",
   "./wheels/mpmath-1.3.0-py3-none-any.whl",
   "./wheels/multidict-6.7.1-cp311-cp311-macosx_11_0_arm64.whl",
@@ -166,8 +158,6 @@ wheels = [
   "./wheels/numpy-2.4.3-cp311-cp311-win_amd64.whl",
   "./wheels/onnxruntime-1.19.2-cp311-cp311-macosx_11_0_universal2.whl",
   "./wheels/onnxruntime-1.19.2-cp311-cp311-win_amd64.whl",
-  "./wheels/openai-0.27.10-py3-none-any.whl",
-  "./wheels/openai-1.39.0-py3-none-any.whl",
   "./wheels/openai-2.30.0-py3-none-any.whl",
   "./wheels/openresponses_types-2.3.0.post1-py3-none-any.whl",
   "./wheels/orjson-3.11.7-cp311-cp311-macosx_10_15_x86_64.macosx_11_0_arm64.macosx_10_15_universal2.whl",
@@ -177,8 +167,6 @@ wheels = [
   "./wheels/pandas-3.0.1-cp311-cp311-win_amd64.whl",
   "./wheels/parso-0.8.6-py2.py3-none-any.whl",
   "./wheels/pexpect-4.9.0-py2.py3-none-any.whl",
-  "./wheels/pillow-11.3.0-cp311-cp311-macosx_11_0_arm64.whl",
-  "./wheels/pillow-11.3.0-cp311-cp311-win_amd64.whl",
   "./wheels/pillow-12.1.1-cp311-cp311-macosx_11_0_arm64.whl",
   "./wheels/pillow-12.1.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
   "./wheels/pillow-12.1.1-cp311-cp311-win_amd64.whl",
@@ -200,7 +188,6 @@ wheels = [
   "./wheels/pyasn1-0.6.3-py3-none-any.whl",
   "./wheels/pyasn1_modules-0.4.2-py3-none-any.whl",
   "./wheels/pycparser-3.0-py3-none-any.whl",
-  "./wheels/pydantic-1.10.26-py3-none-any.whl",
   "./wheels/pydantic-2.12.5-py3-none-any.whl",
   "./wheels/pydantic_core-2.41.5-cp311-cp311-macosx_11_0_arm64.whl",
   "./wheels/pydantic_core-2.41.5-cp311-cp311-win_amd64.whl",
@@ -220,7 +207,6 @@ wheels = [
   "./wheels/pytz-2026.1.post1-py2.py3-none-any.whl",
   "./wheels/pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl",
   "./wheels/pyyaml-6.0.3-cp311-cp311-win_amd64.whl",
-  "./wheels/referencing-0.23.0-py3-none-any.whl",
   "./wheels/referencing-0.37.0-py3-none-any.whl",
   "./wheels/regex-2026.2.28-cp311-cp311-macosx_11_0_arm64.whl",
   "./wheels/regex-2026.2.28-cp311-cp311-win_amd64.whl",
@@ -242,8 +228,6 @@ wheels = [
   "./wheels/soupsieve-2.8.3-py3-none-any.whl",
   "./wheels/sse_starlette-3.3.3-py3-none-any.whl",
   "./wheels/stack_data-0.6.3-py3-none-any.whl",
-  "./wheels/starlette-0.50.0-py3-none-any.whl",
-  "./wheels/starlette-0.52.1-py3-none-any.whl",
   "./wheels/starlette-1.0.0-py3-none-any.whl",
   "./wheels/sympy-1.14.0-py3-none-any.whl",
   "./wheels/tabulate-0.9.0-py3-none-any.whl",

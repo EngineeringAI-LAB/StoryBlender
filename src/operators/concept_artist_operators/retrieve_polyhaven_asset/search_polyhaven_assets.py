@@ -10,6 +10,7 @@ import os
 import sys
 import shutil
 import tempfile
+import threading
 from pprint import pprint
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -19,6 +20,7 @@ import re
 from pathlib import Path
 
 _MODEL_SOURCE_DIR = Path(__file__).resolve().parent / "bge_small_en_v1.5_model"
+_MODEL_CACHE_LOCK = threading.Lock()
 
 
 def _get_model_cache_dir() -> str:
@@ -29,6 +31,10 @@ def _get_model_cache_dir() -> str:
     copying the bundled model to a short temporary directory and patching the
     ``files_metadata.json`` so recorded sizes match the files on disk (git may
     convert LF → CRLF in text files, inflating their size).
+
+    Thread-safe: the setup is guarded by a process-wide lock so concurrent
+    callers (e.g. ThreadPoolExecutor in the concept artist) don't race on
+    creating the cache directory.
     """
     if sys.platform != "win32":
         return str(_MODEL_SOURCE_DIR)
@@ -37,8 +43,16 @@ def _get_model_cache_dir() -> str:
     hf_subdir = "models--qdrant--bge-small-en-v1.5-onnx-q"
     marker = short_dir / ".cache_ok"
 
-    if not marker.exists():
-        # (Re-)create the short cache from the bundled source.
+    if marker.exists():
+        return str(short_dir)
+
+    with _MODEL_CACHE_LOCK:
+        # Re-check after acquiring the lock: another thread may have finished.
+        if marker.exists():
+            return str(short_dir)
+
+        # (Re-)create the short cache from the bundled source. Wipe any
+        # partial leftovers from a previous failed/interrupted run.
         if short_dir.exists():
             shutil.rmtree(short_dir, ignore_errors=True)
         short_dir.mkdir(parents=True, exist_ok=True)
@@ -47,7 +61,9 @@ def _get_model_cache_dir() -> str:
         # source paths that exceed 260 characters.
         src = "\\\\?\\" + str((_MODEL_SOURCE_DIR / hf_subdir).resolve())
         dst = str(short_dir / hf_subdir)
-        shutil.copytree(src, dst)
+        # dirs_exist_ok handles the (now unlikely) case where the dst was
+        # created between the rmtree above and this call.
+        shutil.copytree(src, dst, dirs_exist_ok=True)
 
         # Fix files_metadata.json: update recorded sizes to match the
         # actual (possibly CRLF-inflated) files in the copy.
@@ -84,6 +100,7 @@ def _fix_hf_cache_metadata(cache_dir: str) -> None:
 
 from typing import Dict, List, Any, Optional, Literal
 
+import ssl
 import requests
 import numpy as np
 try:
@@ -111,6 +128,36 @@ def get_embeddings_dir() -> Path:
     return Path(__file__).parent / "polyhaven_embeddings"
 
 
+def _get_ssl_ca_bundle():
+    """
+    Return a valid CA bundle for requests.verify.
+
+    Inside Blender's extension Python environment, certifi.where() can point to
+    a path that does not exist on disk, causing TLS errors.  This function
+    resolves a usable bundle in the following order:
+    1. certifi.where() — only if the file actually exists.
+    2. ssl.get_default_verify_paths().cafile — system CA file.
+    3. ssl.get_default_verify_paths().capath — system CA directory.
+    4. False — disables verification as a last resort (logged as a warning).
+    """
+    try:
+        import certifi
+        ca = certifi.where()
+        if os.path.isfile(ca):
+            return ca
+    except Exception:
+        pass
+
+    paths = ssl.get_default_verify_paths()
+    if paths.cafile and os.path.isfile(paths.cafile):
+        return paths.cafile
+    if paths.capath and os.path.isdir(paths.capath):
+        return paths.capath
+
+    print("[StoryBlender] WARNING: No valid TLS CA bundle found; disabling SSL verification.")
+    return False
+
+
 def verify_asset_availability(asset_id: str, timeout: float = 5.0) -> bool:
     """
     Verify if an asset is still available on Polyhaven.
@@ -136,6 +183,7 @@ def verify_asset_availability(asset_id: str, timeout: float = 5.0) -> bool:
                 "Referer": "https://polyhaven.com/",
             },
             timeout=timeout,
+            verify=_get_ssl_ca_bundle(),
         )
         return response.status_code == 200
     except Exception as e:

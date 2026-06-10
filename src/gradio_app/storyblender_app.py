@@ -67,9 +67,13 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
     
     # Create configuration UI
     config = create_config_ui()
+    image_gen_platform = config["image_gen_platform"]
     gemini_image_model = config["gemini_image_model"]
     gemini_api_key = config["gemini_api_key"]
     gemini_api_base = config["gemini_api_base"]
+    openai_api_key = config["openai_api_key"]
+    openai_api_base = config["openai_api_base"]
+    openai_image_model = config["openai_image_model"]
     reasoning_model = config["reasoning_model"]
     vision_model = config["vision_model"]
     anyllm_api_key = config["anyllm_api_key"]
@@ -78,13 +82,19 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
     sketchfab_api_key = config["sketchfab_api_key"]
     meshy_api_key = config["meshy_api_key"]
     meshy_model = config["meshy_model"]
+    uthana_api_key = config["uthana_api_key"]
+    uthana_fps = config["uthana_fps"]
     tencent_secret_id = config["tencent_secret_id"]
     tencent_secret_key = config["tencent_secret_key"]
     ai_platform = config["ai_platform"]
     project_dir = config["project_dir"]
     
+    gr.Markdown("---")
+    
     # Step 1: Generate Base Storyboard Script by Director
     director_ui = create_director_ui(reasoning_model, anyllm_api_key, anyllm_api_base, anyllm_provider, project_dir)
+    
+    gr.Markdown("---")
     
     # Step 2: Fetch and Format Core 3D Assets by Concept Artist
     assets_ui = create_3d_assets_ui(
@@ -103,8 +113,14 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         vision_model,
         ai_platform,
         tencent_secret_id,
-        tencent_secret_key
+        tencent_secret_key,
+        image_gen_platform,
+        openai_api_key,
+        openai_api_base,
+        openai_image_model
     )
+    
+    gr.Markdown("---")
     
     # Step 3: Formulate Scene Spatial Layout by Production Designer
     layout_ui = create_layout_ui(
@@ -115,6 +131,8 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         project_dir,
         blender_client
     )
+    
+    gr.Markdown("---")
     
     # Step 4: Design and Fetch Supplementary Assets by Set Dresser and Concept Artist
     supplementary_ui = create_supplementary_assets_ui(
@@ -136,6 +154,8 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         blender_client
     )
     
+    gr.Markdown("---")
+    
     # Step 5: Formulate Scene Supplementary Spatial Layout by Set Dresser
     supplementary_layout_ui = create_supplementary_layout_ui(
         reasoning_model,
@@ -145,6 +165,8 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         project_dir,
         blender_client
     )
+    
+    gr.Markdown("---")
     
     # Step 6: Apply Lighting with Lighting Designer
     lighting_designer_ui = create_lighting_designer_ui(
@@ -156,6 +178,8 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         vision_model,
     )
     
+    gr.Markdown("---")
+    
     # Step 7: Create Environment with Environment Artist
     environment_artist_ui = create_environment_artist_ui(
         project_dir,
@@ -166,11 +190,15 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         vision_model,
     )
     
+    gr.Markdown("---")
+    
     # Step 8: Apply Asset Modifications in All Shots
     apply_asset_modifications_ui = create_apply_asset_modifications_ui(
         project_dir,
         blender_client
     )
+    
+    gr.Markdown("---")
     
     # Step 9: Rigging and Animate Assets by Animator
     animator_rigging_ui = create_animator_rigging_ui(
@@ -180,8 +208,13 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         anyllm_api_base,
         anyllm_provider,
         vision_model,
-        blender_client
+        reasoning_model,
+        blender_client,
+        uthana_api_key=uthana_api_key,
+        uthana_fps=uthana_fps,
     )
+    
+    gr.Markdown("---")
     
     # Step 10: Camera Blocking by Layout Artist
     camera_blocking_ui = create_camera_blocking_ui(
@@ -194,21 +227,29 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         reasoning_model
     )
     
+    gr.Markdown("---")
+    
     # Step 11: Post Process
     post_process_ui = create_post_process_ui(
         project_dir,
         blender_client
     )
     
+    gr.Markdown("---")
+    
     # Step 12: Rendering
     rendering_ui = create_rendering_ui(
         project_dir
     )
     
+    gr.Markdown("---")
+    
     # Step 13: Stitch Frames to Video
     stitch_frames_ui = create_stitch_frames_ui(
         project_dir
     )
+    
+    gr.Markdown("---")
     
     # Setup configuration button handlers (must be at end after all UI is created)
     setup_config_handlers(config)

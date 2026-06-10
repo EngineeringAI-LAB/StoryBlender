@@ -483,7 +483,6 @@ def generate_json_response(
                 response_format=response_schema,
                 api_key=api_key,
                 api_base=base_url,
-                client_args={"http_options": {"timeout": 300000}}
             )
             gc.collect()
 
@@ -705,9 +704,6 @@ def generate_supplementary_layout_description(
             "w": a.get("width", 0), "d": a.get("depth", 0), "h": a.get("height", 0)
         }
     
-    # Use longer timeout for long reasoning tasks
-    client_args = {"http_options": {"timeout": 600000}}
-    
     try:
         for scene_id in scene_ids:
             print("=" * 60)
@@ -754,7 +750,6 @@ def generate_supplementary_layout_description(
                             response_format=SupplementaryLayoutDescriptionOutput,
                             api_key=anyllm_api_key,
                             api_base=anyllm_api_base,
-                            client_args=client_args
                         )
                         gc.collect()
                         result = json.loads(response.choices[0].message.content)

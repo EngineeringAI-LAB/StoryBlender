@@ -63,7 +63,6 @@ def generate_json_response(
                 response_format=response_schema,
                 api_key=anyllm_api_key,
                 api_base=anyllm_api_base,
-                client_args={"http_options": {"timeout": 300000}}
             )
             gc.collect()
 

@@ -6,9 +6,15 @@ __pycache__
 examples
 projects
 .windsurf
-*.json
+# *.json
+.env
+.env.*
+!.env.example
+src/operators/layout_artist_operators/dimension_estimation.json
 *.pdf
 *.jpg
 *.png
 .DS_Store
 uthana
+example_input
+example_output
