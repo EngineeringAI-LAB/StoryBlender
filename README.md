@@ -61,7 +61,7 @@ zip -r storyblender.zip StoryBlender
 
 ### 2) Install in Blender
 
-In Blender, go to:
+In Blender (please use Blender 4.5 LTS, 5.0+ has compatible issues), go to:
 
 `Edit` → `Preferences` → `Get Extensions` → *(top-right dropdown menu)* → `Install from Disk`
 
