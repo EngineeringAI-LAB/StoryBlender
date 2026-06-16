@@ -128,6 +128,7 @@ AnyLLM docs: https://mozilla-ai.github.io/any-llm/
 - **AI Platform**: choose which platform to use for 3D model generation: `Hunyuan3D`, `Meshy`, or `TRELLIS2`
 
 ### Sixth row *(optional; for local TRELLIS2)*
+**Follow the instructions here to set up the server:** https://github.com/EngineeringAI-LAB/TRELLIS.2-Web-API
 - **TRELLIS2 API Base**: default `http://127.0.0.1:7862/openapi/v1`
 - **TRELLIS2 Max Concurrent**: default `1`. Keep this low unless your TRELLIS server has enough GPU memory for parallel jobs.
 - **TRELLIS2 Texture Size**: default `4096`
@@ -155,7 +156,7 @@ TRELLIS2_API_BASE=http://127.0.0.1:7862/openapi/v1
 
 ## 🛠️ Workflow
 
-Once configuration is saved, follow the on-screen instructions in the web UI to complete the full storyboard generation and editing pipeline.
+Once the configuration is saved, follow the on-screen instructions in the web UI to complete the full storyboard generation and editing pipeline.
 
 If you have questions, feel free to open a discussion:
 - https://github.com/EngineeringAI-LAB/StoryBlender/discussions
