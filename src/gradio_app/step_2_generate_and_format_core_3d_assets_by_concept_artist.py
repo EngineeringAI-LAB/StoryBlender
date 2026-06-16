@@ -18,7 +18,22 @@ from ..operators.concept_artist_operators.asset_dimension_estimator import (
 from .json_editor import JSONEditorComponent
 from .path_utils import make_paths_absolute, make_paths_relative
 
+try:
+    from ..env_config import get_env
+except ImportError:
+    from env_config import get_env
+
 logger = logging.getLogger(__name__)
+
+
+def _clean_config_text(value):
+    """Normalize optional Gradio/env text values."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    if not value or value.lower() == "none":
+        return None
+    return value
 
 
 def get_latest_director_json_path(project_dir):
@@ -332,11 +347,26 @@ def generate_image_prompts(
         except Exception:
             pass  # Use director_result if loading fails
     
-    # Set API base to None if empty string
-    gemini_base = gemini_api_base if gemini_api_base and gemini_api_base.strip() else None
-    
-    # Set OpenAI API base to None if empty string
-    openai_base = openai_api_base if openai_api_base and openai_api_base.strip() else None
+    image_gen_platform = _clean_config_text(image_gen_platform) or "Gemini"
+    gemini_api_key = _clean_config_text(gemini_api_key) or _clean_config_text(get_env("GEMINI_API_KEY"))
+    gemini_base = _clean_config_text(gemini_api_base) or _clean_config_text(get_env("GEMINI_API_BASE"))
+    openai_api_key = _clean_config_text(openai_api_key) or _clean_config_text(get_env("OPENAI_API_KEY"))
+    openai_base = _clean_config_text(openai_api_base) or _clean_config_text(get_env("OPENAI_API_BASE"))
+    openai_image_model = _clean_config_text(openai_image_model) or _clean_config_text(get_env("OPENAI_IMAGE_MODEL", "gpt-image-2"))
+
+    if image_gen_platform == "OpenAI":
+        if not openai_api_key:
+            return {
+                "error": "⚠️ OpenAI image generation is selected, but OpenAI API Key is empty. Fill `OPENAI_API_KEY` or choose Gemini for image generation."
+            }
+        if not openai_base:
+            return {
+                "error": "⚠️ OpenAI image generation is selected, but OpenAI API Base is empty. `TRELLIS2 API Base` is only for 3D generation; fill `OPENAI_API_BASE` or choose Gemini for image generation."
+            }
+        if not openai_base.startswith(("http://", "https://")):
+            return {
+                "error": f"⚠️ OpenAI API Base must start with http:// or https://. Current value: `{openai_base}`"
+            }
     
     try:
         result = fetch_image_prompt(

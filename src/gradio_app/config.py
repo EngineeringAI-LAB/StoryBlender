@@ -196,7 +196,7 @@ def create_config_ui():
         ai_platform = gr.Dropdown(
             label="AI Platform",
             choices=["Hunyuan3D", "Meshy", "TRELLIS2"],
-            value=_choice_env("STORYBLENDER_AI_PLATFORM", "Hunyuan3D", ["Hunyuan3D", "Meshy", "TRELLIS2"]),
+            value=_choice_env("STORYBLENDER_AI_PLATFORM", "TRELLIS2", ["Hunyuan3D", "Meshy", "TRELLIS2"]),
             info="AI platform for 3D model generation",
             visible=True
         )

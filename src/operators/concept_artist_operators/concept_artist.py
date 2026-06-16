@@ -1150,6 +1150,15 @@ def generate_image_openai(openai_api_key, openai_api_base, model, prompt):
         PIL.Image: Generated image object, or None if no image was generated
     """
     from PIL import Image
+
+    openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    openai_api_base = (openai_api_base or os.getenv("OPENAI_API_BASE") or "").strip().rstrip("/")
+    if not openai_api_key:
+        raise RuntimeError("Missing OpenAI API key. Set OPENAI_API_KEY or fill it in the Configuration panel.")
+    if not openai_api_base or openai_api_base.lower() == "none":
+        raise RuntimeError("Missing OpenAI API base. Set OPENAI_API_BASE or fill it in the Configuration panel.")
+    if not openai_api_base.startswith(("http://", "https://")):
+        raise RuntimeError(f"Invalid OpenAI API base '{openai_api_base}'. It must start with http:// or https://.")
     
     url = f"{openai_api_base}/v1/images/generations"
     
@@ -1190,6 +1199,15 @@ def generate_image_openai_edit(openai_api_key, openai_api_base, model, prompt, i
         PIL.Image: Edited image object, or None if editing failed
     """
     from PIL import Image
+
+    openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    openai_api_base = (openai_api_base or os.getenv("OPENAI_API_BASE") or "").strip().rstrip("/")
+    if not openai_api_key:
+        raise RuntimeError("Missing OpenAI API key. Set OPENAI_API_KEY or fill it in the Configuration panel.")
+    if not openai_api_base or openai_api_base.lower() == "none":
+        raise RuntimeError("Missing OpenAI API base. Set OPENAI_API_BASE or fill it in the Configuration panel.")
+    if not openai_api_base.startswith(("http://", "https://")):
+        raise RuntimeError(f"Invalid OpenAI API base '{openai_api_base}'. It must start with http:// or https://.")
     
     url = f"{openai_api_base}/v1/images/edits"
     
