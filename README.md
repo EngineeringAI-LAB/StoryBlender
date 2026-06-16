@@ -96,7 +96,7 @@ Required and optional values:
 - Required: `ANYLLM_API_KEY`, `ANYLLM_API_BASE`, and `ANYLLM_PROVIDER` for reasoning and vision steps.
 - Required, choose one: Gemini image generation (`GEMINI_API_KEY`, `GEMINI_API_BASE`, `GEMINI_IMAGE_MODEL`) or OpenAI-compatible image generation (`OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_IMAGE_MODEL`). Select the active one with `STORYBLENDER_IMAGE_GEN_PLATFORM`.
 - Optional: `SKETCHFAB_API_KEY`, required only if you want to retrieve 3D models from Sketchfab.
-- Required, choose one: Meshy (`MESHY_API_KEY`, `MESHY_MODEL`) or Hunyuan3D (`TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY`) for 3D model generation. Select the active one with `STORYBLENDER_AI_PLATFORM`.
+- Required, choose one: Meshy (`MESHY_API_KEY`, `MESHY_MODEL`), Hunyuan3D (`TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY`), or local TRELLIS2 (`TRELLIS2_API_BASE` and related `TRELLIS2_*` settings) for 3D model generation. Select the active one with `STORYBLENDER_AI_PLATFORM`.
 - Optional: `UTHANA_API_KEY` and `UTHANA_FPS`. If left empty, the Uthana animation pipeline and the animation auto pipeline will not be available.
 - Optional: `STORYBLENDER_PROJECT_DIR`, an absolute project directory to pre-fill the UI.
 
@@ -125,9 +125,30 @@ AnyLLM docs: https://mozilla-ai.github.io/any-llm/
 - **Tencent Cloud Secret ID** and **Tencent Cloud Secret Key**
   - EN: https://www.tencentcloud.com/document/product/1284/75281
   - CN: https://cloud.tencent.com/document/product/1804/123461
-- **AI Platform**: choose which platform to use for 3D model generation
+- **AI Platform**: choose which platform to use for 3D model generation: `Hunyuan3D`, `Meshy`, or `TRELLIS2`
 
-### Sixth row
+### Sixth row *(optional; for local TRELLIS2)*
+- **TRELLIS2 API Base**: default `http://127.0.0.1:7862/openapi/v1`
+- **TRELLIS2 Max Concurrent**: default `1`. Keep this low unless your TRELLIS server has enough GPU memory for parallel jobs.
+- **TRELLIS2 Texture Size**: default `4096`
+- **TRELLIS2 Resolution**: default `1024`; supported values are `512`, `1024`, and `1536`
+- **TRELLIS2 Decimation Target**: default `1000000`
+
+To use this provider, start the TRELLIS.2 local API server from the TRELLIS.2 environment before running StoryBlender:
+
+```bash
+cd ../TRELLIS.2-Web-API
+python trellis2_api_server.py --host 127.0.0.1 --port 7862
+```
+
+Then set:
+
+```bash
+STORYBLENDER_AI_PLATFORM=TRELLIS2
+TRELLIS2_API_BASE=http://127.0.0.1:7862/openapi/v1
+```
+
+### Seventh row
 - **Project Absolute Directory**: absolute path to your project directory to store all intermediate files for a story
 
 ---

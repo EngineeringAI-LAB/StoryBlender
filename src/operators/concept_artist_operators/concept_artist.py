@@ -14,6 +14,7 @@ metadata information:
         "no_genai": do not use text_to_image_to_3d to generate the model with AI
         "meshy": the model is generated with Meshy.
         "hunyuan3d": the model is generated with Hunyuan3D.
+        "trellis2": the model is generated with TRELLIS2.
     main_file_path(str): the path of the main file of the model.
     thumbnail_url(str): the url of the thumbnail of the model.
     polyhaven_id(str): the id of the model in polyhaven.
@@ -23,6 +24,7 @@ metadata information:
     sketchfab_tags(str): the tags of the model in sketchfab.
     sketchfab_name(str): the name of the model in sketchfab.
     meshy_model_id(str): the id of the model in meshy.
+    trellis2_task_id(str): the task id of the model in TRELLIS2.
     error(str): the error of the model.
 """
 
@@ -145,6 +147,7 @@ def convert_metadata_to_asset_sheet(
             "polyhaven_name",
             "polyhaven_tags",
             "hunyuan3d_job_id",
+            "trellis2_task_id",
             "error",
             "reflection_log",
         ]:
@@ -1699,6 +1702,67 @@ def image_to_3d_meshy(
         time.sleep(poll_interval)
 
 
+def image_to_3d_trellis2(
+    image_url: str,
+    *,
+    trellis2_api_base: Optional[str] = None,
+    texture_size: int = 4096,
+    resolution: str = "1024",
+    decimation_target: int = 1000000,
+    poll_interval: float = 5.0,
+    timeout: float = 20 * 60.0,
+    session: Optional[requests.Session] = None,
+) -> Dict[str, Any]:
+    """Create a local TRELLIS2 image-to-3D task and block until it completes."""
+    api_base = (trellis2_api_base or os.getenv("TRELLIS2_API_BASE") or "http://127.0.0.1:7862/openapi/v1").rstrip("/")
+    sess = session or requests.Session()
+    task_payload = {
+        "image_url": image_url,
+        "texture_size": int(texture_size),
+        "resolution": str(resolution),
+        "decimation_target": int(decimation_target),
+    }
+
+    try:
+        create_resp = sess.post(f"{api_base}/image-to-3d", json=task_payload, timeout=30)
+        create_resp.raise_for_status()
+        create_data = create_resp.json()
+    except (RequestException, ProxyError, ConnectionError) as e:
+        raise MeshyAPIError(f"Failed to create TRELLIS2 image-to-3D task: {e}")
+
+    task_id = create_data.get("result")
+    if not task_id:
+        raise MeshyAPIError(f"TRELLIS2 create task response missing 'result'. Response: {create_data!r}")
+
+    start_time = time.time()
+    task_url = f"{api_base}/image-to-3d/{task_id}"
+    terminal_statuses = {"SUCCEEDED", "FAILED", "CANCELED"}
+
+    while True:
+        if time.time() - start_time > timeout:
+            raise MeshyAPIError(
+                f"Timed out waiting for TRELLIS2 image-to-3D task {task_id} after {timeout} seconds"
+            )
+
+        try:
+            resp = sess.get(task_url, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+        except (RequestException, ProxyError, ConnectionError) as e:
+            raise MeshyAPIError(f"Failed to poll TRELLIS2 image-to-3D task status: {e}")
+
+        status = data.get("status")
+        if status in terminal_statuses:
+            if status == "SUCCEEDED":
+                return data
+            task_error = (data.get("task_error") or {}).get("message")
+            raise MeshyAPIError(
+                f"TRELLIS2 image-to-3D task {task_id} ended with status {status}. Error: {task_error}"
+            )
+
+        time.sleep(poll_interval)
+
+
 class Hunyuan3DAPIError(RuntimeError):
     """Raised when the Hunyuan3D API returns an error or the task fails."""
 
@@ -2026,6 +2090,10 @@ def text_to_image_to_3d(
     timeout: float = 20 * 60.0,
     meshy_api_key: Optional[str] = None,
     meshy_api_base: Optional[str] = "https://api.meshy.ai/openapi/v1",
+    trellis2_api_base: Optional[str] = None,
+    trellis2_texture_size: int = 4096,
+    trellis2_resolution: str = "1024",
+    trellis2_decimation_target: int = 1000000,
     tencent_secret_id: Optional[str] = None,
     tencent_secret_key: Optional[str] = None,
     session: Optional[requests.Session] = None,
@@ -2048,7 +2116,7 @@ def text_to_image_to_3d(
         model_id: Identifier for the model (used for naming the saved image file).
         description: Description of the 3D model for quality checking.
         output_dir: Directory to save the generated image (default: "./models").
-        ai_platform: AI platform for 3D generation. Options: "Hunyuan3D", "Meshy". Default: "Hunyuan3D".
+        ai_platform: AI platform for 3D generation. Options: "Hunyuan3D", "Meshy", "TRELLIS2". Default: "Hunyuan3D".
         gemini_api_key: Gemini API key for image generation. If not provided, read from env var GEMINI_API_KEY.
         gemini_api_base: Base URL for Gemini API (None for official API).
         gemini_image_model: Gemini model to use for image generation (default: "gemini-3-pro-image-preview").
@@ -2083,11 +2151,11 @@ def text_to_image_to_3d(
         MeshyAPIError/Hunyuan3DAPIError: If API key is missing, task fails/cancels, or timeout occurs.
         requests.HTTPError: For non-2xx HTTP responses.
         RuntimeError: If image generation fails.
-        ValueError: If ai_platform is not one of "Hunyuan3D" or "Meshy".
+        ValueError: If ai_platform is not one of "Hunyuan3D", "Meshy", or "TRELLIS2".
     """
     # Validate ai_platform
-    if ai_platform not in ("Hunyuan3D", "Meshy"):
-        raise ValueError(f"ai_platform must be one of 'Hunyuan3D' or 'Meshy', got '{ai_platform}'")
+    if ai_platform not in ("Hunyuan3D", "Meshy", "TRELLIS2"):
+        raise ValueError(f"ai_platform must be one of 'Hunyuan3D', 'Meshy', or 'TRELLIS2', got '{ai_platform}'")
     
     # Validate image generation credentials
     if image_gen_platform == "OpenAI":
@@ -2214,7 +2282,7 @@ def text_to_image_to_3d(
             poll_interval=poll_interval,
             timeout=timeout,
         )
-    else:
+    elif ai_platform == "Meshy":
         # Use Meshy - convert image to base64 data URI
         with open(image_path, "rb") as img_file:
             img_bytes = img_file.read()
@@ -2236,6 +2304,23 @@ def text_to_image_to_3d(
             timeout=timeout,
             meshy_api_key=meshy_api_key,
             meshy_api_base=meshy_api_base,
+            session=session,
+        )
+    else:
+        # Use local TRELLIS2 - convert image to base64 data URI
+        with open(image_path, "rb") as img_file:
+            img_bytes = img_file.read()
+        img_str = base64.b64encode(img_bytes).decode()
+        image_data_uri = f"data:image/png;base64,{img_str}"
+
+        result = image_to_3d_trellis2(
+            image_url=image_data_uri,
+            trellis2_api_base=trellis2_api_base,
+            texture_size=trellis2_texture_size,
+            resolution=trellis2_resolution,
+            decimation_target=trellis2_decimation_target,
+            poll_interval=poll_interval,
+            timeout=timeout,
             session=session,
         )
     
@@ -2311,6 +2396,51 @@ def download_model_from_meshy(
     }
     
     return model_info
+
+
+def download_model_from_trellis2(
+    task_result: Dict[str, Any],
+    output_path: str = "./model.glb",
+    format: str = "glb",
+    session: Optional[requests.Session] = None,
+) -> Dict[str, Any]:
+    """Download a TRELLIS2 model from the local Meshy-like task result."""
+    model_urls = task_result.get("model_urls", {})
+    model_url = model_urls.get(format)
+    model_id = task_result.get("asset_id") or task_result.get("id")
+    thumbnail_url = task_result.get("thumbnail_url")
+
+    if not model_url:
+        raise MeshyAPIError(
+            f"TRELLIS2 task result does not contain a '{format}' model URL. Available formats: {list(model_urls.keys())}"
+        )
+
+    sess = session or requests.Session()
+    max_retries = 3
+    retry_delay = 2.0
+
+    for attempt in range(max_retries):
+        try:
+            response = sess.get(model_url, stream=True, timeout=180)
+            response.raise_for_status()
+            break
+        except (RequestException, ProxyError, ConnectionError) as e:
+            if attempt == max_retries - 1:
+                raise MeshyAPIError(f"Failed to download TRELLIS2 model after {max_retries} attempts: {e}")
+            print(f"TRELLIS2 download attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
+            time.sleep(retry_delay)
+            retry_delay *= 2
+
+    with open(output_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+
+    return {
+        "model_path": output_path,
+        "model_id": model_id,
+        "thumbnail_url": thumbnail_url,
+    }
 
 
 # Image prompt generation functions
@@ -2958,6 +3088,10 @@ def _generate_single_3d_from_image(
     meshy_ai_model: str = "latest",
     tencent_secret_id: Optional[str] = None,
     tencent_secret_key: Optional[str] = None,
+    trellis2_api_base: Optional[str] = None,
+    trellis2_texture_size: int = 4096,
+    trellis2_resolution: str = "1024",
+    trellis2_decimation_target: int = 1000000,
 ) -> Dict[str, Any]:
     """
     Generate a single 3D model from an image prompt.
@@ -2980,6 +3114,7 @@ def _generate_single_3d_from_image(
         "main_file_path": None,
         "meshy_model_id": None,
         "hunyuan3d_job_id": None,
+        "trellis2_task_id": None,
         "thumbnail_url": None,
         "error": None,
     }
@@ -3007,7 +3142,7 @@ def _generate_single_3d_from_image(
             result["main_file_path"] = os.path.abspath(model_info["model_path"])
             result["hunyuan3d_job_id"] = model_info["model_id"]
             result["thumbnail_url"] = model_info["thumbnail_url"]
-        else:
+        elif ai_platform == "Meshy":
             # Use Meshy - read image and convert to base64 data URI
             with open(image_path, "rb") as img_file:
                 img_bytes = img_file.read()
@@ -3033,6 +3168,33 @@ def _generate_single_3d_from_image(
             result["main_file_path"] = os.path.abspath(model_info["model_path"])
             result["meshy_model_id"] = model_info["model_id"]
             result["thumbnail_url"] = model_info["thumbnail_url"]
+        elif ai_platform == "TRELLIS2":
+            # Use local TRELLIS2 - read image and convert to base64 data URI
+            with open(image_path, "rb") as img_file:
+                img_bytes = img_file.read()
+            img_str = base64.b64encode(img_bytes).decode()
+            image_data_uri = f"data:image/png;base64,{img_str}"
+
+            task_result = image_to_3d_trellis2(
+                image_url=image_data_uri,
+                trellis2_api_base=trellis2_api_base,
+                texture_size=trellis2_texture_size,
+                resolution=trellis2_resolution,
+                decimation_target=trellis2_decimation_target,
+                poll_interval=5,
+                timeout=15 * 60,
+            )
+
+            model_info = download_model_from_trellis2(
+                task_result=task_result,
+                output_path=output_path,
+            )
+
+            result["main_file_path"] = os.path.abspath(model_info["model_path"])
+            result["trellis2_task_id"] = model_info["model_id"]
+            result["thumbnail_url"] = model_info["thumbnail_url"]
+        else:
+            raise ValueError(f"Unsupported AI platform: {ai_platform}")
         
         return result
         
@@ -3049,6 +3211,11 @@ def fetch_3d_from_image_prompt(
     meshy_ai_model: str = "latest",
     tencent_secret_id: Optional[str] = None,
     tencent_secret_key: Optional[str] = None,
+    trellis2_api_base: Optional[str] = None,
+    trellis2_max_concurrent: int = 1,
+    trellis2_texture_size: int = 4096,
+    trellis2_resolution: str = "1024",
+    trellis2_decimation_target: int = 1000000,
     max_concurrent: int = 10,
     model_id_list: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -3056,12 +3223,12 @@ def fetch_3d_from_image_prompt(
     Generate 3D models from image prompts in parallel.
     
     This function takes the result of fetch_image_prompt (which contains image_prompt_path for each asset)
-    and generates 3D models using Meshy's or Hunyuan3D's image-to-3D API.
+    and generates 3D models using Meshy, Hunyuan3D, or TRELLIS2 image-to-3D APIs.
     
     Args:
         image_prompt_result: Dictionary containing asset_sheet with image_prompt_path for each asset
         output_dir: Directory to save 3D models
-        ai_platform: AI platform for 3D generation. Options: "Hunyuan3D", "Meshy". Default: "Hunyuan3D".
+        ai_platform: AI platform for 3D generation. Options: "Hunyuan3D", "Meshy", "TRELLIS2". Default: "Hunyuan3D".
         meshy_api_key: Meshy API key for 3D generation (required if ai_platform is "Meshy")
         meshy_ai_model: Meshy AI model version (default: "latest")
         tencent_secret_id: Tencent Cloud Secret ID (required if ai_platform is "Hunyuan3D")
@@ -3107,6 +3274,8 @@ def fetch_3d_from_image_prompt(
         max_concurrent = 3
     if ai_platform == "Meshy" and max_concurrent > 10:
         max_concurrent = 10
+    if ai_platform == "TRELLIS2":
+        max_concurrent = max(1, int(trellis2_max_concurrent or 1))
 
     # Initial attempt
     with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
@@ -3121,6 +3290,10 @@ def fetch_3d_from_image_prompt(
                 meshy_ai_model,
                 tencent_secret_id,
                 tencent_secret_key,
+                trellis2_api_base,
+                trellis2_texture_size,
+                trellis2_resolution,
+                trellis2_decimation_target,
             ): asset_id
             for asset_id, image_path, _ in assets_to_process
         }
@@ -3169,6 +3342,10 @@ def fetch_3d_from_image_prompt(
                     meshy_ai_model,
                     tencent_secret_id,
                     tencent_secret_key,
+                    trellis2_api_base,
+                    trellis2_texture_size,
+                    trellis2_resolution,
+                    trellis2_decimation_target,
                 ): asset_id
                 for asset_id, image_path, _ in failed_models
             }
@@ -3200,13 +3377,18 @@ def fetch_3d_from_image_prompt(
                 if ai_platform == "Hunyuan3D":
                     if "hunyuan3d" not in asset["tags"]:
                         asset["tags"].append("hunyuan3d")
-                else:
+                elif ai_platform == "Meshy":
                     if "meshy" not in asset["tags"]:
                         asset["tags"].append("meshy")
+                elif ai_platform == "TRELLIS2":
+                    if "trellis2" not in asset["tags"]:
+                        asset["tags"].append("trellis2")
             if gen_result.get("meshy_model_id"):
                 asset["meshy_model_id"] = gen_result["meshy_model_id"]
             if gen_result.get("hunyuan3d_job_id"):
                 asset["hunyuan3d_job_id"] = gen_result["hunyuan3d_job_id"]
+            if gen_result.get("trellis2_task_id"):
+                asset["trellis2_task_id"] = gen_result["trellis2_task_id"]
             if gen_result.get("thumbnail_url"):
                 # Download thumbnail and update URLs
                 thumbnail_url = gen_result["thumbnail_url"]
@@ -3419,11 +3601,15 @@ def _fetch_single_model_generation_only(
     meshy_ai_model: str = "latest",
     tencent_secret_id: Optional[str] = None,
     tencent_secret_key: Optional[str] = None,
+    trellis2_api_base: Optional[str] = None,
+    trellis2_texture_size: int = 4096,
+    trellis2_resolution: str = "1024",
+    trellis2_decimation_target: int = 1000000,
     vision_model: str = "openai/gpt-5-mini",
     story_summary: str = "",
 ) -> Dict[str, Any]:
     """
-    Fetch a single model using only AI generation (Hunyuan3D or Meshy).
+    Fetch a single model using only AI generation (Hunyuan3D, Meshy, or TRELLIS2).
     
     This function is used as a fallback for models that failed retrieval.
     It performs text-to-image-to-3D generation which is slower than retrieval.
@@ -3437,7 +3623,7 @@ def _fetch_single_model_generation_only(
         gemini_api_key: Gemini API key for image generation
         gemini_api_base: Base URL for Gemini API (optional)
         output_dir: Directory to save downloaded models
-        ai_platform: AI platform for 3D generation ("Hunyuan3D" or "Meshy")
+        ai_platform: AI platform for 3D generation ("Hunyuan3D", "Meshy", or "TRELLIS2")
         gemini_image_model: Gemini model for image generation
         meshy_ai_model: Meshy AI model version
         tencent_secret_id: Tencent Cloud Secret ID (required for Hunyuan3D)
@@ -3477,6 +3663,10 @@ def _fetch_single_model_generation_only(
             poll_interval=5,
             timeout=15 * 60,
             meshy_api_key=meshy_api_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
             anyllm_api_key=anyllm_api_key,
@@ -3487,7 +3677,7 @@ def _fetch_single_model_generation_only(
     
         # Download the model based on platform
         # Remove old source tags when regenerating with a new source
-        source_tags = ["sketchfab", "polyhaven", "hunyuan3d", "meshy"]
+        source_tags = ["sketchfab", "polyhaven", "hunyuan3d", "meshy", "trellis2"]
         result["tags"] = [t for t in result["tags"] if t not in source_tags]
         
         if ai_platform == "Hunyuan3D":
@@ -3506,6 +3696,14 @@ def _fetch_single_model_generation_only(
             result["main_file_path"] = os.path.abspath(model_info["model_path"])
             result["tags"].append("meshy")
             result["meshy_model_id"] = model_info["model_id"]
+        if ai_platform == "TRELLIS2":
+            model_info = download_model_from_trellis2(
+                task_result=task_result,
+                output_path=output_path,
+            )
+            result["main_file_path"] = os.path.abspath(model_info["model_path"])
+            result["tags"].append("trellis2")
+            result["trellis2_task_id"] = model_info["model_id"]
         
         result["error"] = None
         # Download thumbnail and update URLs
@@ -3548,6 +3746,11 @@ def _fetch_single_model(
     meshy_ai_model: str = "latest",
     tencent_secret_id: Optional[str] = None,
     tencent_secret_key: Optional[str] = None,
+    trellis2_api_base: Optional[str] = None,
+    trellis2_max_concurrent: int = 1,
+    trellis2_texture_size: int = 4096,
+    trellis2_resolution: str = "1024",
+    trellis2_decimation_target: int = 1000000,
     vision_model: str = "openai/gpt-5-mini",
     anyllm_provider: str = "openai",
     force_genai: bool = False,
@@ -3572,7 +3775,7 @@ def _fetch_single_model(
         meshy_api_key: Meshy API key
         gemini_api_key: Gemini API key for image generation
         output_dir: Directory to save downloaded models
-        ai_platform: AI platform for 3D generation. Options: "Hunyuan3D", "Meshy". Default: "Hunyuan3D".
+        ai_platform: AI platform for 3D generation. Options: "Hunyuan3D", "Meshy", "TRELLIS2". Default: "Hunyuan3D".
         gemini_image_model: Gemini model to use for image generation (default: "gemini-3-pro-image-preview")
         meshy_ai_model: Meshy AI model version to use for 3D generation (default: "latest")
         tencent_secret_id: Tencent Cloud Secret ID (required if ai_platform is "Hunyuan3D")
@@ -3707,6 +3910,10 @@ def _fetch_single_model(
                 poll_interval=5,
                 timeout=15 * 60,
                 meshy_api_key=meshy_api_key,
+                trellis2_api_base=trellis2_api_base,
+                trellis2_texture_size=trellis2_texture_size,
+                trellis2_resolution=trellis2_resolution,
+                trellis2_decimation_target=trellis2_decimation_target,
                 tencent_secret_id=tencent_secret_id,
                 tencent_secret_key=tencent_secret_key,
                 anyllm_api_key=anyllm_api_key,
@@ -3717,7 +3924,7 @@ def _fetch_single_model(
         
             # Download the model based on platform
             # Remove old source tags when regenerating with a new source
-            source_tags = ["sketchfab", "polyhaven", "hunyuan3d", "meshy"]
+            source_tags = ["sketchfab", "polyhaven", "hunyuan3d", "meshy", "trellis2"]
             result["tags"] = [t for t in result["tags"] if t not in source_tags]
             
             if ai_platform == "Hunyuan3D":
@@ -3736,6 +3943,14 @@ def _fetch_single_model(
                 result["main_file_path"] = os.path.abspath(model_info["model_path"])
                 result["tags"].append("meshy")
                 result["meshy_model_id"] = model_info["model_id"]
+            if ai_platform == "TRELLIS2":
+                model_info = download_model_from_trellis2(
+                    task_result=task_result,
+                    output_path=output_path,
+                )
+                result["main_file_path"] = os.path.abspath(model_info["model_path"])
+                result["tags"].append("trellis2")
+                result["trellis2_task_id"] = model_info["model_id"]
             
             result["error"] = None
             # Download thumbnail and update URLs
@@ -3848,7 +4063,12 @@ def fetch_model(
     # Retrieval can use high concurrency since Polyhaven/Sketchfab are fast
     max_retrieval_concurrent = max_concurrent
     # Generation needs lower concurrency for Hunyuan3D due to API limits
-    max_generation_concurrent = 3 if ai_platform == "Hunyuan3D" else max_concurrent
+    if ai_platform == "Hunyuan3D":
+        max_generation_concurrent = 3
+    elif ai_platform == "TRELLIS2":
+        max_generation_concurrent = max(1, int(trellis2_max_concurrent or 1))
+    else:
+        max_generation_concurrent = max_concurrent
     
     # Separate models that need force_genai (skip retrieval) from others
     models_for_retrieval = {}
@@ -3957,6 +4177,10 @@ def fetch_model(
                     meshy_ai_model,
                     tencent_secret_id,
                     tencent_secret_key,
+                    trellis2_api_base,
+                    trellis2_texture_size,
+                    trellis2_resolution,
+                    trellis2_decimation_target,
                     vision_model,
                     story_summary,
                 ): model_id
@@ -4028,6 +4252,10 @@ def fetch_model(
                     meshy_ai_model,
                     tencent_secret_id,
                     tencent_secret_key,
+                    trellis2_api_base,
+                    trellis2_texture_size,
+                    trellis2_resolution,
+                    trellis2_decimation_target,
                     vision_model,
                     story_summary,
                 ): model_id

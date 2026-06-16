@@ -66,6 +66,11 @@ def generate_3d_assets(
     meshy_model="latest",
     tencent_secret_id=None,
     tencent_secret_key=None,
+    trellis2_api_base=None,
+    trellis2_max_concurrent=1,
+    trellis2_texture_size=4096,
+    trellis2_resolution="1024",
+    trellis2_decimation_target=1000000,
     vision_model="gemini/gemini-2.5-flash"
 ):
     """Generate 3D assets by calling fetch_model.
@@ -79,7 +84,7 @@ def generate_3d_assets(
         gemini_image_model: Gemini model for image generation
         project_dir: Project directory path
         editor_component: JSONEditorComponent to display results
-        ai_platform: AI platform for 3D generation ("Hunyuan3D" or "Meshy")
+        ai_platform: AI platform for 3D generation ("Hunyuan3D", "Meshy", or "TRELLIS2")
         meshy_model: Meshy AI model version
         tencent_secret_id: Tencent Cloud Secret ID for Hunyuan3D
         tencent_secret_key: Tencent Cloud Secret Key for Hunyuan3D
@@ -107,7 +112,7 @@ def generate_3d_assets(
     try:
         # Call fetch_model
         result = fetch_model(
-            path_to_director_json=director_json_path,
+            path_to_input_json=director_json_path,
             anyllm_api_key=anyllm_api_key,
             anyllm_api_base=anyllm_api_base,
             sketchfab_api_key=sketchfab_api_key,
@@ -120,6 +125,11 @@ def generate_3d_assets(
             meshy_ai_model=meshy_model,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model,
             anyllm_provider=anyllm_provider,
         )
@@ -154,6 +164,11 @@ def show_loading_and_generate_3d_assets(
     meshy_model="latest",
     tencent_secret_id=None,
     tencent_secret_key=None,
+    trellis2_api_base=None,
+    trellis2_max_concurrent=1,
+    trellis2_texture_size=4096,
+    trellis2_resolution="1024",
+    trellis2_decimation_target=1000000,
     vision_model="gemini/gemini-2.5-flash"
 ):
     """Show loading indicator and generate 3D assets."""
@@ -181,6 +196,11 @@ def show_loading_and_generate_3d_assets(
         meshy_model=meshy_model,
         tencent_secret_id=tencent_secret_id,
         tencent_secret_key=tencent_secret_key,
+        trellis2_api_base=trellis2_api_base,
+        trellis2_max_concurrent=trellis2_max_concurrent,
+        trellis2_texture_size=trellis2_texture_size,
+        trellis2_resolution=trellis2_resolution,
+        trellis2_decimation_target=trellis2_decimation_target,
         vision_model=vision_model
     )
     
@@ -203,7 +223,12 @@ def show_loading_and_generate_3d_assets(
 
 def create_generate_wrapper(editor_component):
     """Factory function to create a generate wrapper bound to a specific editor component."""
-    def generate_wrapper(anyllm_api_key, anyllm_api_base, anyllm_provider, sketchfab_api_key, meshy_api_key, gemini_api_key, gemini_image_model, project_dir, ai_platform, meshy_model, tencent_secret_id, tencent_secret_key, vision_model):
+    def generate_wrapper(
+        anyllm_api_key, anyllm_api_base, anyllm_provider, sketchfab_api_key, meshy_api_key,
+        gemini_api_key, gemini_image_model, project_dir, ai_platform, meshy_model,
+        tencent_secret_id, tencent_secret_key, trellis2_api_base, trellis2_max_concurrent,
+        trellis2_texture_size, trellis2_resolution, trellis2_decimation_target, vision_model
+    ):
         """Wrapper to properly yield from the generator."""
         for result in show_loading_and_generate_3d_assets(
             editor_component,
@@ -219,6 +244,11 @@ def create_generate_wrapper(editor_component):
             meshy_model=meshy_model,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model
         ):
             yield result
@@ -604,6 +634,11 @@ def generate_3d_from_images(
     ai_platform="Hunyuan3D",
     tencent_secret_id=None,
     tencent_secret_key=None,
+    trellis2_api_base=None,
+    trellis2_max_concurrent=1,
+    trellis2_texture_size=4096,
+    trellis2_resolution="1024",
+    trellis2_decimation_target=1000000,
     model_id_list=None
 ):
     """Generate 3D assets from image prompts.
@@ -613,7 +648,7 @@ def generate_3d_from_images(
         meshy_model: Meshy model version
         project_dir: Project directory path
         editor_component: JSONEditorComponent to display results
-        ai_platform: AI platform for 3D generation ("Hunyuan3D" or "Meshy")
+        ai_platform: AI platform for 3D generation ("Hunyuan3D", "Meshy", or "TRELLIS2")
         tencent_secret_id: Tencent Cloud Secret ID for Hunyuan3D
         tencent_secret_key: Tencent Cloud Secret Key for Hunyuan3D
         model_id_list: Optional list of model IDs to regenerate (None = all)
@@ -680,6 +715,11 @@ def generate_3d_from_images(
             meshy_ai_model=meshy_model,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             max_concurrent=10,
             model_id_list=model_id_list,
         )
@@ -707,6 +747,11 @@ def show_loading_and_generate_3d_from_images(
     ai_platform="Hunyuan3D",
     tencent_secret_id=None,
     tencent_secret_key=None,
+    trellis2_api_base=None,
+    trellis2_max_concurrent=1,
+    trellis2_texture_size=4096,
+    trellis2_resolution="1024",
+    trellis2_decimation_target=1000000,
     model_id_list=None
 ):
     """Show loading indicator and generate 3D assets from images."""
@@ -734,6 +779,11 @@ def show_loading_and_generate_3d_from_images(
         ai_platform=ai_platform,
         tencent_secret_id=tencent_secret_id,
         tencent_secret_key=tencent_secret_key,
+        trellis2_api_base=trellis2_api_base,
+        trellis2_max_concurrent=trellis2_max_concurrent,
+        trellis2_texture_size=trellis2_texture_size,
+        trellis2_resolution=trellis2_resolution,
+        trellis2_decimation_target=trellis2_decimation_target,
         model_id_list=model_id_list
     )
     
@@ -766,7 +816,11 @@ def show_loading_and_generate_3d_from_images(
 
 def create_generate_3d_wrapper(editor_component):
     """Factory function to create a generate 3D wrapper bound to a specific editor component."""
-    def generate_wrapper(meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id, tencent_secret_key):
+    def generate_wrapper(
+        meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id,
+        tencent_secret_key, trellis2_api_base, trellis2_max_concurrent,
+        trellis2_texture_size, trellis2_resolution, trellis2_decimation_target
+    ):
         """Wrapper to properly yield from the generator."""
         for result in show_loading_and_generate_3d_from_images(
             editor_component,
@@ -776,6 +830,11 @@ def create_generate_3d_wrapper(editor_component):
             ai_platform=ai_platform,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             model_id_list=None  # Generate all
         ):
             yield result
@@ -846,7 +905,12 @@ def find_failed_3d_model_ids(project_dir):
 
 def create_regenerate_3d_wrapper(editor_component):
     """Factory function to create a regenerate 3D wrapper bound to a specific editor component."""
-    def regenerate_wrapper(meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id, tencent_secret_key, model_id_list):
+    def regenerate_wrapper(
+        meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id,
+        tencent_secret_key, trellis2_api_base, trellis2_max_concurrent,
+        trellis2_texture_size, trellis2_resolution, trellis2_decimation_target,
+        model_id_list
+    ):
         """Wrapper to properly yield from the generator."""
         if not model_id_list:
             # Return early if no models selected
@@ -864,6 +928,11 @@ def create_regenerate_3d_wrapper(editor_component):
             ai_platform=ai_platform,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             model_id_list=model_id_list
         ):
             yield result
@@ -874,7 +943,9 @@ def create_retry_failed_3d_wrapper(editor_component):
     """Factory: retry only assets in ``concept_artist.json`` whose
     ``main_file_path`` is missing or does not exist on disk."""
     def retry_wrapper(meshy_api_key, meshy_model, project_dir, ai_platform,
-                      tencent_secret_id, tencent_secret_key):
+                      tencent_secret_id, tencent_secret_key, trellis2_api_base,
+                      trellis2_max_concurrent, trellis2_texture_size,
+                      trellis2_resolution, trellis2_decimation_target):
         failed_ids = find_failed_3d_model_ids(project_dir)
         if not failed_ids:
             msg = "✅ No failed 3D models found in `concept_artist.json`. Nothing to retry."
@@ -893,6 +964,11 @@ def create_retry_failed_3d_wrapper(editor_component):
             ai_platform=ai_platform,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             model_id_list=failed_ids,
         ):
             yield result
@@ -1455,6 +1531,11 @@ def create_3d_assets_ui(
     ai_platform,
     tencent_secret_id,
     tencent_secret_key,
+    trellis2_api_base,
+    trellis2_max_concurrent,
+    trellis2_texture_size,
+    trellis2_resolution,
+    trellis2_decimation_target,
     image_gen_platform=None,
     openai_api_key=None,
     openai_api_base=None,
@@ -1475,7 +1556,7 @@ def create_3d_assets_ui(
         project_dir: Gradio component for project directory
         blender_client: BlenderClient instance for communicating with Blender
         vision_model: Gradio component for vision model
-        ai_platform: Gradio component for AI platform selector ("Hunyuan3D" or "Meshy")
+        ai_platform: Gradio component for AI platform selector ("Hunyuan3D", "Meshy", or "TRELLIS2")
         tencent_secret_id: Gradio component for Tencent Cloud Secret ID
         tencent_secret_key: Gradio component for Tencent Cloud Secret Key
         
@@ -1483,7 +1564,7 @@ def create_3d_assets_ui(
         dict with UI components that may be needed by other parts of the app
     """
     gr.Markdown("## Step 2: Fetch and Format Core 3D Assets by Concept Artist")
-    gr.Markdown("Generate 3D models for all assets defined in the storyboard using Gemini for image generation and AI (Hunyuan3D or Meshy) for 3D conversion.")
+    gr.Markdown("Generate 3D models for all assets defined in the storyboard using image generation and the selected AI 3D provider.")
     
     # =========================================================================
     # Step 2.1: Generate Image Prompt for 3D Assets
@@ -1865,7 +1946,7 @@ def create_3d_assets_ui(
     # Step 2.2: Generate 3D Assets
     # =========================================================================
     gr.Markdown("### Step 2.2: Generate 3D Assets")
-    gr.Markdown("Generate 3D models from the image prompts using Meshy API. This step may take 10-20 minutes.")
+    gr.Markdown("Generate 3D models from the image prompts using the selected 3D provider. This step may take 10-20 minutes.")
     
     with gr.Row():
         generate_3d_btn = gr.Button("🧊 Generate 3D Assets", variant="primary", size="lg", scale=2)
@@ -1894,12 +1975,20 @@ def create_3d_assets_ui(
     # Generate 3D button click handler
     generate_3d_btn.click(
         fn=generate_3d_wrapper,
-        inputs=[meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id, tencent_secret_key],
+        inputs=[
+            meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id,
+            tencent_secret_key, trellis2_api_base, trellis2_max_concurrent,
+            trellis2_texture_size, trellis2_resolution, trellis2_decimation_target,
+        ],
         outputs=assets_editor.get_output_components() + [loading_status_3d, generate_3d_btn],
     )
     retry_failed_3d_btn.click(
         fn=retry_failed_3d_wrapper,
-        inputs=[meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id, tencent_secret_key],
+        inputs=[
+            meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id,
+            tencent_secret_key, trellis2_api_base, trellis2_max_concurrent,
+            trellis2_texture_size, trellis2_resolution, trellis2_decimation_target,
+        ],
         outputs=assets_editor.get_output_components() + [loading_status_3d, retry_failed_3d_btn],
     )
     
@@ -2144,7 +2233,12 @@ def create_3d_assets_ui(
     # Regenerate 3D models button handler
     regenerate_3d_btn.click(
         fn=regenerate_3d_wrapper,
-        inputs=[meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id, tencent_secret_key, model_regen_selection],
+        inputs=[
+            meshy_api_key, meshy_model, project_dir, ai_platform, tencent_secret_id,
+            tencent_secret_key, trellis2_api_base, trellis2_max_concurrent,
+            trellis2_texture_size, trellis2_resolution, trellis2_decimation_target,
+            model_regen_selection,
+        ],
         outputs=assets_editor.get_output_components() + [loading_status_3d, generate_3d_btn]
     )
     

@@ -278,6 +278,11 @@ def generate_supplementary_3d_assets(
     meshy_model="latest",
     tencent_secret_id=None,
     tencent_secret_key=None,
+    trellis2_api_base=None,
+    trellis2_max_concurrent=1,
+    trellis2_texture_size=4096,
+    trellis2_resolution="1024",
+    trellis2_decimation_target=1000000,
     vision_model="gemini/gemini-2.5-flash",
     model_id_list=None,
     force_genai=False
@@ -292,7 +297,7 @@ def generate_supplementary_3d_assets(
         gemini_api_key: Gemini API key
         gemini_image_model: Gemini model for image generation
         project_dir: Project directory path
-        ai_platform: AI platform for 3D generation ("Hunyuan3D" or "Meshy")
+        ai_platform: AI platform for 3D generation ("Hunyuan3D", "Meshy", or "TRELLIS2")
         meshy_model: Meshy AI model version
         tencent_secret_id: Tencent Cloud Secret ID for Hunyuan3D
         tencent_secret_key: Tencent Cloud Secret Key for Hunyuan3D
@@ -345,6 +350,11 @@ def generate_supplementary_3d_assets(
             meshy_ai_model=meshy_model,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model,
             anyllm_provider=anyllm_provider,
             model_id_list=model_id_list,
@@ -439,6 +449,11 @@ def show_loading_and_generate_supplementary_3d(
     meshy_model="latest",
     tencent_secret_id=None,
     tencent_secret_key=None,
+    trellis2_api_base=None,
+    trellis2_max_concurrent=1,
+    trellis2_texture_size=4096,
+    trellis2_resolution="1024",
+    trellis2_decimation_target=1000000,
     vision_model="gemini/gemini-2.5-flash",
     model_id_list=None,
     force_genai=False
@@ -474,6 +489,11 @@ def show_loading_and_generate_supplementary_3d(
         meshy_model=meshy_model,
         tencent_secret_id=tencent_secret_id,
         tencent_secret_key=tencent_secret_key,
+        trellis2_api_base=trellis2_api_base,
+        trellis2_max_concurrent=trellis2_max_concurrent,
+        trellis2_texture_size=trellis2_texture_size,
+        trellis2_resolution=trellis2_resolution,
+        trellis2_decimation_target=trellis2_decimation_target,
         vision_model=vision_model,
         model_id_list=model_id_list,
         force_genai=force_genai
@@ -510,7 +530,9 @@ def create_generate_supplementary_wrapper(editor_component):
     def generate_wrapper(
         anyllm_api_key, anyllm_api_base, anyllm_provider, sketchfab_api_key, meshy_api_key, 
         gemini_api_key, gemini_api_base, gemini_image_model, project_dir, ai_platform, 
-        meshy_model, tencent_secret_id, tencent_secret_key, vision_model
+        meshy_model, tencent_secret_id, tencent_secret_key, trellis2_api_base,
+        trellis2_max_concurrent, trellis2_texture_size, trellis2_resolution,
+        trellis2_decimation_target, vision_model
     ):
         """Wrapper to properly yield from the generator."""
         for result in show_loading_and_generate_supplementary_3d(
@@ -528,6 +550,11 @@ def create_generate_supplementary_wrapper(editor_component):
             meshy_model=meshy_model,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model,
             model_id_list=None,  # Generate all
             force_genai=False
@@ -579,7 +606,9 @@ def create_retry_failed_supplementary_wrapper(editor_component):
     def retry_wrapper(
         anyllm_api_key, anyllm_api_base, anyllm_provider, sketchfab_api_key, meshy_api_key,
         gemini_api_key, gemini_api_base, gemini_image_model, project_dir, ai_platform,
-        meshy_model, tencent_secret_id, tencent_secret_key, vision_model,
+        meshy_model, tencent_secret_id, tencent_secret_key, trellis2_api_base,
+        trellis2_max_concurrent, trellis2_texture_size, trellis2_resolution,
+        trellis2_decimation_target, vision_model,
     ):
         failed_ids = find_failed_supplementary_3d_ids(project_dir)
         if not failed_ids:
@@ -606,6 +635,11 @@ def create_retry_failed_supplementary_wrapper(editor_component):
             meshy_model=meshy_model,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model,
             model_id_list=failed_ids,
             force_genai=False,  # retry the full pipeline (polyhaven/sketchfab/genai)
@@ -619,7 +653,9 @@ def create_regenerate_supplementary_wrapper(editor_component):
     def regenerate_wrapper(
         anyllm_api_key, anyllm_api_base, anyllm_provider, sketchfab_api_key, meshy_api_key, 
         gemini_api_key, gemini_api_base, gemini_image_model, project_dir, ai_platform, 
-        meshy_model, tencent_secret_id, tencent_secret_key, vision_model,
+        meshy_model, tencent_secret_id, tencent_secret_key, trellis2_api_base,
+        trellis2_max_concurrent, trellis2_texture_size, trellis2_resolution,
+        trellis2_decimation_target, vision_model,
         model_id_list
     ):
         """Wrapper to properly yield from the generator."""
@@ -646,6 +682,11 @@ def create_regenerate_supplementary_wrapper(editor_component):
             meshy_model=meshy_model,
             tencent_secret_id=tencent_secret_id,
             tencent_secret_key=tencent_secret_key,
+            trellis2_api_base=trellis2_api_base,
+            trellis2_max_concurrent=trellis2_max_concurrent,
+            trellis2_texture_size=trellis2_texture_size,
+            trellis2_resolution=trellis2_resolution,
+            trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model,
             model_id_list=model_id_list,
             force_genai=True  # Force genai for regeneration
@@ -1259,6 +1300,11 @@ def create_supplementary_assets_ui(
     ai_platform,
     tencent_secret_id,
     tencent_secret_key,
+    trellis2_api_base,
+    trellis2_max_concurrent,
+    trellis2_texture_size,
+    trellis2_resolution,
+    trellis2_decimation_target,
     blender_client
 ):
     """Create the Step 4: Design and Fetch Supplementary Assets by Set Dresser and Concept Artist UI section.
@@ -1274,7 +1320,7 @@ def create_supplementary_assets_ui(
         gemini_image_model: Gradio component for Gemini image model
         project_dir: Gradio component for project directory
         vision_model: Gradio component for vision model
-        ai_platform: Gradio component for AI platform selector ("Hunyuan3D" or "Meshy")
+        ai_platform: Gradio component for AI platform selector ("Hunyuan3D", "Meshy", or "TRELLIS2")
         tencent_secret_id: Gradio component for Tencent Cloud Secret ID
         tencent_secret_key: Gradio component for Tencent Cloud Secret Key
         blender_client: BlenderClient instance for communicating with Blender
@@ -1370,6 +1416,11 @@ def create_supplementary_assets_ui(
         meshy_model,
         tencent_secret_id,
         tencent_secret_key,
+        trellis2_api_base,
+        trellis2_max_concurrent,
+        trellis2_texture_size,
+        trellis2_resolution,
+        trellis2_decimation_target,
         vision_model,
     ]
 
@@ -1510,6 +1561,11 @@ def create_supplementary_assets_ui(
             meshy_model,
             tencent_secret_id,
             tencent_secret_key,
+            trellis2_api_base,
+            trellis2_max_concurrent,
+            trellis2_texture_size,
+            trellis2_resolution,
+            trellis2_decimation_target,
             vision_model,
             model_regen_selection
         ],

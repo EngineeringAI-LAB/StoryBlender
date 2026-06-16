@@ -153,10 +153,50 @@ def create_config_ui():
             info="Your Tencent Cloud Secret Key for Hunyuan3D",
             visible=True
         )
+        
+    with gr.Row():
+        trellis2_api_base = gr.Textbox(
+            label="TRELLIS2 API Base",
+            value=get_env("TRELLIS2_API_BASE", "http://127.0.0.1:7862/openapi/v1"),
+            info="Local TRELLIS2 Meshy-like API base URL",
+            visible=True
+        )
+        trellis2_max_concurrent = gr.Number(
+            label="TRELLIS2 Max Concurrent",
+            value=get_int_env("TRELLIS2_MAX_CONCURRENT", 1),
+            precision=0,
+            info="Maximum concurrent TRELLIS2 generations (default: 1)",
+            visible=True
+        )
+        trellis2_texture_size = gr.Number(
+            label="TRELLIS2 Texture Size",
+            value=get_int_env("TRELLIS2_TEXTURE_SIZE", 4096),
+            precision=0,
+            info="Texture size for TRELLIS2 GLB export (default: 4096)",
+            visible=True
+        )
+
+    with gr.Row():
+        trellis2_resolution = gr.Dropdown(
+            label="TRELLIS2 Resolution",
+            choices=["512", "1024", "1536"],
+            value=_choice_env("TRELLIS2_RESOLUTION", "1024", ["512", "1024", "1536"]),
+            info="TRELLIS2 generation resolution",
+            visible=True
+        )
+        trellis2_decimation_target = gr.Number(
+            label="TRELLIS2 Decimation Target",
+            value=get_int_env("TRELLIS2_DECIMATION_TARGET", 1000000),
+            precision=0,
+            info="Target face count for TRELLIS2 GLB export",
+            visible=True
+        )
+
+    with gr.Row():
         ai_platform = gr.Dropdown(
             label="AI Platform",
-            choices=["Hunyuan3D", "Meshy"],
-            value=_choice_env("STORYBLENDER_AI_PLATFORM", "Hunyuan3D", ["Hunyuan3D", "Meshy"]),
+            choices=["Hunyuan3D", "Meshy", "TRELLIS2"],
+            value=_choice_env("STORYBLENDER_AI_PLATFORM", "Hunyuan3D", ["Hunyuan3D", "Meshy", "TRELLIS2"]),
             info="AI platform for 3D model generation",
             visible=True
         )
@@ -214,6 +254,11 @@ def create_config_ui():
         "uthana_fps": uthana_fps,
         "tencent_secret_id": tencent_secret_id,
         "tencent_secret_key": tencent_secret_key,
+        "trellis2_api_base": trellis2_api_base,
+        "trellis2_max_concurrent": trellis2_max_concurrent,
+        "trellis2_texture_size": trellis2_texture_size,
+        "trellis2_resolution": trellis2_resolution,
+        "trellis2_decimation_target": trellis2_decimation_target,
         "ai_platform": ai_platform,
         "project_dir": project_dir,
         "save_config_btn": save_config_btn,
@@ -255,6 +300,11 @@ def setup_config_handlers(config_components):
     uthana_fps = config_components["uthana_fps"]
     tencent_secret_id = config_components["tencent_secret_id"]
     tencent_secret_key = config_components["tencent_secret_key"]
+    trellis2_api_base = config_components["trellis2_api_base"]
+    trellis2_max_concurrent = config_components["trellis2_max_concurrent"]
+    trellis2_texture_size = config_components["trellis2_texture_size"]
+    trellis2_resolution = config_components["trellis2_resolution"]
+    trellis2_decimation_target = config_components["trellis2_decimation_target"]
     ai_platform = config_components["ai_platform"]
     project_dir = config_components["project_dir"]
     save_config_btn = config_components["save_config_btn"]
@@ -300,6 +350,11 @@ def setup_config_handlers(config_components):
                 gr.update(),  # uthana_fps
                 gr.update(),  # tencent_secret_id
                 gr.update(),  # tencent_secret_key
+                gr.update(),  # trellis2_api_base
+                gr.update(),  # trellis2_max_concurrent
+                gr.update(),  # trellis2_texture_size
+                gr.update(),  # trellis2_resolution
+                gr.update(),  # trellis2_decimation_target
                 gr.update(),  # ai_platform
                 gr.update(),  # project_dir
                 gr.update(),  # save_config_btn
@@ -336,6 +391,11 @@ def setup_config_handlers(config_components):
                 gr.update(),  # uthana_fps
                 gr.update(),  # tencent_secret_id
                 gr.update(),  # tencent_secret_key
+                gr.update(),  # trellis2_api_base
+                gr.update(),  # trellis2_max_concurrent
+                gr.update(),  # trellis2_texture_size
+                gr.update(),  # trellis2_resolution
+                gr.update(),  # trellis2_decimation_target
                 gr.update(),  # ai_platform
                 gr.update(),  # project_dir
                 gr.update(),  # save_config_btn
@@ -377,6 +437,11 @@ def setup_config_handlers(config_components):
             gr.update(visible=False),  # uthana_fps
             gr.update(visible=False),  # tencent_secret_id
             gr.update(visible=False),  # tencent_secret_key
+            gr.update(visible=False),  # trellis2_api_base
+            gr.update(visible=False),  # trellis2_max_concurrent
+            gr.update(visible=False),  # trellis2_texture_size
+            gr.update(visible=False),  # trellis2_resolution
+            gr.update(visible=False),  # trellis2_decimation_target
             gr.update(visible=False),  # ai_platform
             gr.update(value=project_path, visible=False),  # project_dir
             gr.update(visible=False),  # save_config_btn
@@ -404,7 +469,10 @@ def setup_config_handlers(config_components):
             anyllm_api_key, anyllm_api_base, anyllm_provider,
             sketchfab_api_key, meshy_api_key, meshy_model,
             uthana_api_key, uthana_fps,
-            tencent_secret_id, tencent_secret_key, ai_platform,
+            tencent_secret_id, tencent_secret_key,
+            trellis2_api_base, trellis2_max_concurrent, trellis2_texture_size,
+            trellis2_resolution, trellis2_decimation_target,
+            ai_platform,
             project_dir, save_config_btn, edit_config_btn, config_warning,
             md_title, md_image_gen, md_sep1, md_reasoning,
             md_sep2, md_3d_services, md_sep3, md_project
@@ -435,6 +503,11 @@ def setup_config_handlers(config_components):
             gr.update(visible=True),   # uthana_fps
             gr.update(visible=True),   # tencent_secret_id
             gr.update(visible=True),   # tencent_secret_key
+            gr.update(visible=True),   # trellis2_api_base
+            gr.update(visible=True),   # trellis2_max_concurrent
+            gr.update(visible=True),   # trellis2_texture_size
+            gr.update(visible=True),   # trellis2_resolution
+            gr.update(visible=True),   # trellis2_decimation_target
             gr.update(visible=True),   # ai_platform
             gr.update(visible=True),   # project_dir
             gr.update(visible=True),   # save_config_btn
@@ -458,7 +531,10 @@ def setup_config_handlers(config_components):
             anyllm_api_key, anyllm_api_base, anyllm_provider,
             sketchfab_api_key, meshy_api_key, meshy_model,
             uthana_api_key, uthana_fps,
-            tencent_secret_id, tencent_secret_key, ai_platform,
+            tencent_secret_id, tencent_secret_key,
+            trellis2_api_base, trellis2_max_concurrent, trellis2_texture_size,
+            trellis2_resolution, trellis2_decimation_target,
+            ai_platform,
             project_dir, save_config_btn, edit_config_btn, config_warning,
             md_title, md_image_gen, md_sep1, md_reasoning,
             md_sep2, md_3d_services, md_sep3, md_project

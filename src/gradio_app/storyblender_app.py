@@ -86,6 +86,11 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
     uthana_fps = config["uthana_fps"]
     tencent_secret_id = config["tencent_secret_id"]
     tencent_secret_key = config["tencent_secret_key"]
+    trellis2_api_base = config["trellis2_api_base"]
+    trellis2_max_concurrent = config["trellis2_max_concurrent"]
+    trellis2_texture_size = config["trellis2_texture_size"]
+    trellis2_resolution = config["trellis2_resolution"]
+    trellis2_decimation_target = config["trellis2_decimation_target"]
     ai_platform = config["ai_platform"]
     project_dir = config["project_dir"]
     
@@ -114,6 +119,11 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         ai_platform,
         tencent_secret_id,
         tencent_secret_key,
+        trellis2_api_base,
+        trellis2_max_concurrent,
+        trellis2_texture_size,
+        trellis2_resolution,
+        trellis2_decimation_target,
         image_gen_platform,
         openai_api_key,
         openai_api_base,
@@ -151,6 +161,11 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         ai_platform,
         tencent_secret_id,
         tencent_secret_key,
+        trellis2_api_base,
+        trellis2_max_concurrent,
+        trellis2_texture_size,
+        trellis2_resolution,
+        trellis2_decimation_target,
         blender_client
     )
     
