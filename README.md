@@ -11,6 +11,8 @@
 </div>
 
 ---
+## 📰 News
+[6/18/2026] StortBlender is accepted to ECCV 2026, see you in 🇸🇪!
 
 ## ✨ Overview
 
