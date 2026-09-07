@@ -20,9 +20,20 @@ PLATFORMS = [
 
 PYTHON_VERSION = '3.11'
 
+# Native packages supplied by Blender itself. Extension wheels are placed
+# ahead of Blender's site-packages, so bundling these would shadow the builds
+# tested with this Blender release.
+BLENDER_BUNDLED_PACKAGES = {'bpy', 'numpy'}
+
 
 def parse_requirements(requirements_file):
-    """Parse the requirements_blender.txt file and extract package names."""
+    """Parse conda-list output into pinned PyPI requirement strings.
+
+    Keeping the recorded versions is important for native modules.  Silently
+    upgrading one of them can produce a wheel that is newer than the libraries
+    bundled with Blender, which is especially likely to fail DLL loading on
+    Windows.
+    """
     packages = []
     with open(requirements_file, 'r') as f:
         for line in f:
@@ -46,48 +57,60 @@ def parse_requirements(requirements_file):
                     'prompt-toolkit', 'psutil', 'ptyprocess', 'pure_eval',
                     'pygments', 'pyzmq', 'readline', 'setuptools', 'sqlite',
                     'stack_data', 'tk', 'tornado', 'traitlets', 'wheel',
-                    'xz', 'zeromq', 'zlib', 'bpy'  # bpy is Blender-specific
-                }
+                    'xz', 'zeromq', 'zlib',
+                } | BLENDER_BUNDLED_PACKAGES
                 
                 if package_name not in skip_packages:
-                    # Convert package name to PyPI format
+                    # Convert package name to PyPI format while preserving the
+                    # version captured from the working environment.
                     pypi_name = package_name.replace('_', '-')
-                    packages.append(pypi_name)
+                    version = parts[1]
+                    packages.append(f"{pypi_name}=={version}")
     
     return sorted(set(packages))
 
 
-def check_package_exists(package, wheels_dir):
-    """Check if wheel files for a package already exist."""
+def _split_requirement(requirement):
+    """Return the normalized distribution name and optional pinned version."""
+    package, separator, version = requirement.partition('==')
+    normalized_package = package.replace('-', '_').lower()
+    return normalized_package, version if separator else None
+
+
+def check_package_exists(requirement, wheels_dir, platform=None):
+    """Check for the requested version and platform in the wheel directory."""
+    package, version = _split_requirement(requirement)
+
     # Normalize package name (replace - with _ and vice versa for matching)
-    package_patterns = [
-        f"{package.replace('-', '_')}-*.whl",
-        f"{package.replace('_', '-')}-*.whl",
-    ]
-    
-    for pattern in package_patterns:
-        if list(Path(wheels_dir).glob(pattern)):
+    version_pattern = version or '*'
+    candidates = list(Path(wheels_dir).glob(f"{package}-{version_pattern}-*.whl"))
+    if platform is None:
+        return bool(candidates)
+
+    for wheel in candidates:
+        filename = wheel.name.lower()
+        if filename.endswith('-none-any.whl'):
             return True
+        if platform == 'win_amd64' and 'win_amd64' in filename:
+            return True
+        if platform == 'manylinux_2_28_x86_64':
+            if 'manylinux' in filename and 'x86_64' in filename:
+                return True
+        if platform == 'macosx_11_0_arm64':
+            if 'macosx' in filename and (
+                'arm64' in filename or 'universal2' in filename
+            ):
+                return True
     return False
 
 
-def download_package_wheels(package, wheels_dir, pbar=None):
+def download_package_wheels(requirement, wheels_dir, pbar=None):
     """
     Download wheels for a package across all platforms.
     This ensures we have both pure Python and platform-specific wheels as needed.
     """
     if pbar:
-        pbar.set_description(f"Checking {package}")
-    
-    # Check if wheels already exist
-    if check_package_exists(package, wheels_dir):
-        if pbar:
-            pbar.write(f"  ✓ {package} wheels already exist, skipping")
-            pbar.update(1)
-        return True
-    
-    if pbar:
-        pbar.set_description(f"Downloading {package}")
+        pbar.set_description(f"Checking {requirement}")
     
     success = False
     
@@ -95,29 +118,31 @@ def download_package_wheels(package, wheels_dir, pbar=None):
     # If it's pure Python, pip will download the same wheel multiple times (we'll dedupe later)
     # If it's platform-specific, we'll get the correct wheels for each platform
     for platform in PLATFORMS:
+        if check_package_exists(requirement, wheels_dir, platform):
+            if pbar:
+                pbar.write(f"  ✓ {requirement} already has a wheel for {platform}")
+            success = True
+            continue
+
+        if pbar:
+            pbar.set_description(f"Downloading {requirement} for {platform}")
+
         cmd = [
-            'pip', 'download', package,
+            sys.executable, '-m', 'pip', 'download', requirement,
             '--dest', str(wheels_dir),
             '--only-binary=:all:',
+            '--no-deps',
             f'--python-version={PYTHON_VERSION}',
             f'--platform={platform}'
         ]
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             success = True
-        except subprocess.CalledProcessError as e:
-            # If binary download fails for a platform, try pure Python wheel
-            if platform == PLATFORMS[0]:  # Only try once
-                if pbar:
-                    pbar.write(f"  Trying pure Python wheel for {package}...")
-                cmd_pure = ['pip', 'wheel', package, '-w', str(wheels_dir), '--no-deps']
-                try:
-                    subprocess.run(cmd_pure, check=True, capture_output=True)
-                    success = True
-                    break
-                except subprocess.CalledProcessError:
-                    if pbar:
-                        pbar.write(f"  Warning: Could not download {package}")
+        except subprocess.CalledProcessError:
+            if pbar:
+                pbar.write(
+                    f"  Warning: Could not download {requirement} for {platform}"
+                )
     
     if pbar:
         pbar.update(1)
@@ -125,9 +150,30 @@ def download_package_wheels(package, wheels_dir, pbar=None):
     return success
 
 
-def get_wheel_files(wheels_dir):
+def get_wheel_files(wheels_dir, requirements=None):
     """Get all wheel files in the wheels directory."""
     wheels = list(Path(wheels_dir).glob('*.whl'))
+
+    # Do not put stale versions of explicitly pinned packages back into the
+    # manifest, and never re-add a package supplied by Blender. This also
+    # makes regeneration safe when upgrading a pin.
+    pinned_versions = (
+        dict(_split_requirement(item) for item in requirements)
+        if requirements else {}
+    )
+    selected_wheels = []
+    for wheel in wheels:
+        parts = wheel.name.split('-', 2)
+        if len(parts) >= 2:
+            package = parts[0].replace('-', '_').lower()
+            if package in BLENDER_BUNDLED_PACKAGES:
+                continue
+            pinned_version = pinned_versions.get(package)
+            if pinned_version and parts[1] != pinned_version:
+                continue
+        selected_wheels.append(wheel)
+    wheels = selected_wheels
+
     return sorted([f'./wheels/{w.name}' for w in wheels])
 
 
@@ -170,19 +216,19 @@ def main():
     
     # Parse requirements
     print("Parsing requirements...")
-    packages = parse_requirements(requirements_file)
-    print(f"Found {len(packages)} packages to download.\n")
+    requirements = parse_requirements(requirements_file)
+    print(f"Found {len(requirements)} packages to download.\n")
     
     # Download wheels for each package with progress bar
-    with tqdm(total=len(packages), desc="Downloading packages", unit="pkg") as pbar:
-        for package in packages:
-            download_package_wheels(package, wheels_dir, pbar)
+    with tqdm(total=len(requirements), desc="Downloading packages", unit="pkg") as pbar:
+        for requirement in requirements:
+            download_package_wheels(requirement, wheels_dir, pbar)
     
     # Download Windows-only conditional dependencies that pip may miss
     # when running on macOS/Linux (they are platform-specific extras).
     win_only_deps = ['win32-setctime', 'colorama']
     for dep in win_only_deps:
-        if not check_package_exists(dep, wheels_dir):
+        if not check_package_exists(dep, wheels_dir, 'win_amd64'):
             print(f"Downloading Windows-only dependency: {dep}")
             try:
                 subprocess.run(
@@ -194,7 +240,7 @@ def main():
                 print(f"  Warning: Could not download {dep}")
 
     # Get all wheel files
-    wheel_paths = get_wheel_files(wheels_dir)
+    wheel_paths = get_wheel_files(wheels_dir, requirements)
     print(f"\nTotal wheels downloaded: {len(wheel_paths)}")
     
     # Update manifest

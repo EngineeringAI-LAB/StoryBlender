@@ -1162,6 +1162,8 @@ def apply_asset_modifications(shot_details: list, asset_sheet: list = None) -> d
                 - modification_type: 'add', 'remove', or 'transform'
                 - target_location: {"x": float, "y": float, "z": float} (optional)
                 - target_rotation: {"x": float, "y": float, "z": float} in degrees (optional)
+                - target_scale: {"x": float, "y": float, "z": float} (optional)
+                - target_dimensions: {"x": float, "y": float, "z": float} (optional)
         asset_sheet: A list of asset dictionaries with 'asset_id' and 'main_file_path'.
                     Required for 'add' modification type.
     
@@ -1287,6 +1289,8 @@ def apply_asset_modifications(shot_details: list, asset_sheet: list = None) -> d
                     # Import a new asset to this shot scene AND all subsequent shots in the same scene
                     target_location = modification.get("target_location")
                     target_rotation = modification.get("target_rotation")
+                    target_scale = modification.get("target_scale")
+                    target_dimensions = modification.get("target_dimensions")
                     
                     # Build info string for logging
                     loc_str = f"location={target_location}" if target_location else ""
@@ -1322,6 +1326,8 @@ def apply_asset_modifications(shot_details: list, asset_sheet: list = None) -> d
                     transform_parameters = {
                         "location": target_location,
                         "rotation": target_rotation,
+                        "scale": target_scale,
+                        "dimensions": target_dimensions,
                     }
                     
                     # Find all shots in the same scene with shot_id >= current shot_id
@@ -1362,6 +1368,8 @@ def apply_asset_modifications(shot_details: list, asset_sheet: list = None) -> d
                     
                     target_location = modification.get("target_location")
                     target_rotation = modification.get("target_rotation")
+                    target_scale = modification.get("target_scale")
+                    target_dimensions = modification.get("target_dimensions")
                     
                     # Build info string for logging
                     loc_str = f"location={target_location}" if target_location else ""
@@ -1427,6 +1435,22 @@ def apply_asset_modifications(shot_details: list, asset_sheet: list = None) -> d
                             new_obj.rotation_euler.y = math.radians(target_rotation["y"])
                         if target_rotation.get("z") is not None:
                             new_obj.rotation_euler.z = math.radians(target_rotation["z"])
+
+                    if target_scale:
+                        if target_scale.get("x") is not None:
+                            new_obj.scale.x = target_scale["x"]
+                        if target_scale.get("y") is not None:
+                            new_obj.scale.y = target_scale["y"]
+                        if target_scale.get("z") is not None:
+                            new_obj.scale.z = target_scale["z"]
+
+                    if target_dimensions:
+                        if target_dimensions.get("x") is not None:
+                            new_obj.dimensions.x = target_dimensions["x"]
+                        if target_dimensions.get("y") is not None:
+                            new_obj.dimensions.y = target_dimensions["y"]
+                        if target_dimensions.get("z") is not None:
+                            new_obj.dimensions.z = target_dimensions["z"]
                     
                     # Preserve the asset_id name
                     new_obj.name = asset_id

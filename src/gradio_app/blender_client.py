@@ -309,6 +309,21 @@ class BlenderClient:
             dict: Scene information or error
         """
         return self._send_command("get_scene_info")
+
+    def capture_manual_adjustments(self, base_scenes: list, shots: list) -> dict:
+        """Capture known asset transforms from base and shot scenes.
+
+        This operation is read-only. Saving the blend file is deliberately a
+        separate command so the Gradio UI can preview and confirm changes first.
+        """
+        return self._send_command("capture_manual_adjustments", {
+            "base_scenes": base_scenes,
+            "shots": shots,
+        })
+
+    def save_current_blend_file(self) -> dict:
+        """Save the currently open blend file to its existing filepath."""
+        return self._send_command("save_current_blend_file", {})
     
     def format_assets(self, path_to_script: str, model_output_dir: str, anyllm_api_key: str = None, vision_model: str = "gemini-3-flash-preview", anyllm_api_base: str = None, anyllm_provider: str = "gemini", model_id_list: list = None, output_json_filename: str = "formatted_model.json") -> dict:
         """Format all models in a storyboard script.

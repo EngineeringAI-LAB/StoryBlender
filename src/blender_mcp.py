@@ -1,8 +1,10 @@
 # Code created by Siddharth Ahuja: www.github.com/ahujasid © 2025
 
 import bpy
+import math
 import mathutils
 import json
+import re
 import threading
 import socket
 import time
@@ -284,6 +286,8 @@ class BlenderMCPServer:
             "camera_operator": self.handle_camera_operator,
             "resume_camera_operator": self.handle_resume_camera_operator,
             "get_camera_info": self.handle_get_camera_info,
+            "capture_manual_adjustments": self.capture_manual_adjustments,
+            "save_current_blend_file": self.save_current_blend_file,
         }
 
 
@@ -336,6 +340,224 @@ class BlenderMCPServer:
             print(f"Error in get_scene_info: {str(e)}")
             traceback.print_exc()
             return {"error": str(e)}
+
+    @staticmethod
+    def _find_manual_adjustment_object(
+        scene, asset_id, scene_id=None, shot_id=None, exact_only=False
+    ):
+        """Find the root object representing *asset_id* in a base or shot scene.
+
+        Shot scenes may contain either the original object name or the renamed
+        animated root created by Step 9 (``asset_id_s{scene}sh{shot}_...``).
+        Exact names take precedence over animated and Blender numeric suffixes.
+        """
+        exact = scene.objects.get(asset_id)
+        if exact is not None:
+            return exact, "static"
+
+        if exact_only:
+            return None, None
+
+        if scene_id is not None and shot_id is not None:
+            animated_pattern = re.compile(
+                rf"^{re.escape(asset_id)}_s{scene_id}sh{shot_id}_.*$"
+            )
+            animated = [
+                obj for obj in scene.objects
+                if obj.parent is None and animated_pattern.match(obj.name)
+            ]
+            if animated:
+                animated.sort(key=lambda obj: obj.name)
+                return animated[0], "animated"
+
+        suffix_pattern = re.compile(rf"^{re.escape(asset_id)}\.\d{{3}}$")
+        suffixed = [obj for obj in scene.objects if suffix_pattern.match(obj.name)]
+        if suffixed:
+            suffixed.sort(key=lambda obj: obj.name)
+            return suffixed[0], "static"
+
+        return None, None
+
+    @staticmethod
+    def _manual_adjustment_dimensions(obj):
+        """Read object dimensions, falling back to descendant world bounds.
+
+        Some imported GLBs expose an EMPTY as the named asset root. EMPTY
+        objects have zero dimensions even though their mesh descendants are
+        visible, so use the complete hierarchy bounds in that case.
+        """
+        try:
+            dimensions = tuple(float(value) for value in obj.dimensions)
+        except Exception:
+            dimensions = (0.0, 0.0, 0.0)
+
+        if all(math.isfinite(value) for value in dimensions) and any(
+            abs(value) > 1e-8 for value in dimensions
+        ):
+            return dimensions
+
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        points = []
+        for candidate in [obj] + list(obj.children_recursive):
+            if candidate.type not in {"MESH", "CURVE", "SURFACE", "FONT", "META"}:
+                continue
+            try:
+                evaluated = candidate.evaluated_get(depsgraph)
+                points.extend(
+                    evaluated.matrix_world @ mathutils.Vector(corner)
+                    for corner in evaluated.bound_box
+                )
+            except Exception:
+                continue
+
+        if not points:
+            return dimensions
+        return tuple(
+            max(point[axis] for point in points) - min(point[axis] for point in points)
+            for axis in range(3)
+        )
+
+    @classmethod
+    def _manual_adjustment_transform(cls, obj, object_kind):
+        dimensions = cls._manual_adjustment_dimensions(obj)
+        return {
+            "actual_name": obj.name,
+            "object_kind": object_kind,
+            "location": {
+                "x": float(obj.location.x),
+                "y": float(obj.location.y),
+                "z": float(obj.location.z),
+            },
+            "rotation": {
+                "x": math.degrees(float(obj.rotation_euler.x)),
+                "y": math.degrees(float(obj.rotation_euler.y)),
+                "z": math.degrees(float(obj.rotation_euler.z)),
+            },
+            "scale": {
+                "x": float(obj.scale.x),
+                "y": float(obj.scale.y),
+                "z": float(obj.scale.z),
+            },
+            "dimensions": {
+                "x": dimensions[0],
+                "y": dimensions[1],
+                "z": dimensions[2],
+            },
+        }
+
+    def capture_manual_adjustments(self, base_scenes=None, shots=None):
+        """Capture known asset transforms without creating or modifying scenes.
+
+        ``base_scenes`` and ``shots`` are manifests supplied by the Gradio
+        process. Each item contains a scene/shot id and the asset ids that are
+        relevant to the project JSON files. Missing objects are returned as
+        ``None`` so the caller can preview intentional deletions.
+        """
+        base_scenes = base_scenes or []
+        shots = shots or []
+        original_scene = getattr(bpy.context.window, "scene", None)
+        original_frames = {}
+        captured_scenes = []
+        captured_shots = []
+
+        try:
+            for item in base_scenes:
+                scene_id = item.get("scene_id")
+                scene_name = f"Scene_{scene_id}"
+                scene = bpy.data.scenes.get(scene_name)
+                if scene is None:
+                    captured_scenes.append({
+                        "scene_id": scene_id,
+                        "scene_name": scene_name,
+                        "missing_scene": True,
+                        "assets": {},
+                    })
+                    continue
+
+                bpy.context.window.scene = scene
+                bpy.context.view_layer.update()
+                assets = {}
+                exact_asset_ids = set(item.get("exact_asset_ids", []))
+                for asset_id in item.get("asset_ids", []):
+                    obj, object_kind = self._find_manual_adjustment_object(
+                        scene,
+                        asset_id,
+                        exact_only=asset_id in exact_asset_ids,
+                    )
+                    assets[asset_id] = (
+                        self._manual_adjustment_transform(obj, object_kind)
+                        if obj is not None else None
+                    )
+                captured_scenes.append({
+                    "scene_id": scene_id,
+                    "scene_name": scene_name,
+                    "missing_scene": False,
+                    "assets": assets,
+                })
+
+            for item in shots:
+                scene_id = item.get("scene_id")
+                shot_id = item.get("shot_id")
+                scene_name = f"Scene_{scene_id}_Shot_{shot_id}"
+                scene = bpy.data.scenes.get(scene_name)
+                if scene is None:
+                    captured_shots.append({
+                        "scene_id": scene_id,
+                        "shot_id": shot_id,
+                        "scene_name": scene_name,
+                        "missing_scene": True,
+                        "assets": {},
+                    })
+                    continue
+
+                original_frames[scene.name] = scene.frame_current
+                bpy.context.window.scene = scene
+                scene.frame_set(scene.frame_start)
+                bpy.context.view_layer.update()
+                assets = {}
+                for asset_id in item.get("asset_ids", []):
+                    obj, object_kind = self._find_manual_adjustment_object(
+                        scene, asset_id, scene_id=scene_id, shot_id=shot_id
+                    )
+                    assets[asset_id] = (
+                        self._manual_adjustment_transform(obj, object_kind)
+                        if obj is not None else None
+                    )
+                captured_shots.append({
+                    "scene_id": scene_id,
+                    "shot_id": shot_id,
+                    "scene_name": scene_name,
+                    "missing_scene": False,
+                    "assets": assets,
+                })
+
+            return {
+                "success": True,
+                "blend_filepath": bpy.data.filepath,
+                "scenes": captured_scenes,
+                "shots": captured_shots,
+            }
+        finally:
+            for scene_name, frame in original_frames.items():
+                scene = bpy.data.scenes.get(scene_name)
+                if scene is not None:
+                    scene.frame_set(frame)
+            if original_scene is not None and original_scene.name in bpy.data.scenes:
+                bpy.context.window.scene = original_scene
+
+    def save_current_blend_file(self):
+        """Save the currently open Blender file to its existing path."""
+        filepath = bpy.data.filepath
+        if not filepath:
+            return {
+                "success": False,
+                "error": "The current Blender file has never been saved. Save it once before updating manual adjustments.",
+            }
+        try:
+            bpy.ops.wm.save_mainfile()
+            return {"success": True, "filepath": bpy.data.filepath}
+        except Exception as exc:
+            return {"success": False, "error": str(exc), "filepath": filepath}
 
     @staticmethod
     def _get_aabb(obj):

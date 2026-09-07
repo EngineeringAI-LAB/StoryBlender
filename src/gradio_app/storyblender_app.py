@@ -267,7 +267,7 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
     gr.Markdown("---")
     
     # Setup configuration button handlers (must be at end after all UI is created)
-    setup_config_handlers(config)
+    setup_config_handlers(config, blender_client)
 
 # This app does NO local ML inference — all heavy work is delegated to Blender via
 # socket.  Setting default_concurrency_limit=None removes the per-function queue

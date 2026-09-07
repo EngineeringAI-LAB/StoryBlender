@@ -8,6 +8,14 @@ try:
 except ImportError:
     from env_config import get_env, get_int_env
 
+from .manual_adjustments import (
+    compact_pending_plan,
+    commit_manual_adjustments,
+    format_preview_rows,
+    format_preview_warnings,
+    prepare_manual_adjustments,
+)
+
 
 def _choice_env(name, default, choices):
     value = get_env(name, default)
@@ -230,9 +238,108 @@ def create_config_ui():
             visible=True
         )
     
-    save_config_btn = gr.Button("💾 Save Configuration", variant="secondary")
-    edit_config_btn = gr.Button("⚙️ Edit Configuration", variant="secondary", visible=False)
+    with gr.Row():
+        save_config_btn = gr.Button("💾 Save Configuration", variant="secondary")
+        edit_config_btn = gr.Button("⚙️ Edit Configuration", variant="secondary", visible=False)
     config_warning = gr.Markdown("", visible=False)
+
+    with gr.Group():
+        gr.Markdown("### Update Manual Adjustments")
+        gr.Markdown(
+            "Use this after you have finished the automated pipeline through Step 9 "
+            "and want to **hand-edit the open Blender file** (move, rotate, scale, "
+            "resize, add, or delete assets in base or shot scenes) without "
+            "re-running earlier steps.\n\n"
+            "StoryBlender keeps layout and animation state in versioned JSON "
+            "(`layout_script`, `supplementary_layout_script`, and "
+            "`animated_models`). This section **reads the current Blender scene "
+            "transforms** (world-space location, XYZ Euler rotation, scale, and "
+            "axis-aligned dimensions) and proposes matching JSON updates. "
+            "Canonical `asset_sheet` width/depth/height values are left unchanged; "
+            "only scene/shot layout entries are updated.\n\n"
+            "**Workflow**\n"
+            "1. Open `step_9.blend` (recommended) and make your edits in Blender.\n"
+            "2. Set comparison tolerances so tiny float noise is ignored. Optionally "
+            "enable **Check Character Animations** to sync exact-name character "
+            "roots from base scenes into `animated_models` (shot-scene character "
+            "action objects are always ignored).\n"
+            "3. Click **Update Manual Adjustments** to scan Blender and show a "
+            "read-only preview of every detected change—nothing is written yet.\n"
+            "4. Review the table (and any warnings). Click **Proceed and Save** to "
+            "write new JSON versions and then save the open `.blend` file, or "
+            "**Cancel** to discard the preview.\n\n"
+            "If Blender, the source JSON, or the tolerance options change between "
+            "preview and confirm, the save is rejected and you must scan again."
+        )
+        with gr.Row():
+            manual_linear_tolerance = gr.Number(
+                label="Linear Tolerance",
+                value=0.01,
+                minimum=0,
+                info="Tolerance for location, scale, and dimensions.",
+            )
+            manual_rotation_tolerance = gr.Number(
+                label="Rotation Tolerance Degrees",
+                value=0.1,
+                minimum=0,
+                info="Angular tolerance in degrees.",
+            )
+            check_character_animations = gr.Checkbox(
+                label="Check Character Animations",
+                value=False,
+                info=(
+                    "Update exact-name character roots in animated_models from "
+                    "base scenes; character objects in shot scenes are always ignored."
+                ),
+            )
+        with gr.Row():
+            animated_character_location_tolerance = gr.Number(
+                label="Animated Character Linear Tolerance (Location)",
+                value=0.3,
+                minimum=0,
+                info=(
+                    "Used for character locations only when Check Character "
+                    "Animations is enabled."
+                ),
+            )
+            animated_character_dimensions_tolerance = gr.Number(
+                label="Animated Character Linear Tolerance (Dimensions)",
+                value=0.2,
+                minimum=0,
+                info=(
+                    "Used for character dimensions only when Check Character "
+                    "Animations is enabled."
+                ),
+            )
+        update_manual_adjustments_btn = gr.Button(
+            "🔄 Update Manual Adjustments", variant="primary"
+        )
+        manual_adjustments_status = gr.Markdown("", visible=False)
+        manual_adjustments_preview = gr.Dataframe(
+            headers=[
+                "#",
+                "File",
+                "Scope",
+                "Scene",
+                "Shot",
+                "Asset",
+                "Change",
+                "Changes",
+            ],
+            value=[],
+            interactive=False,
+            wrap=True,
+            visible=False,
+        )
+        manual_adjustments_warnings = gr.Markdown("", visible=False)
+        pending_manual_adjustments = gr.State(value=None)
+        with gr.Row():
+            proceed_manual_adjustments_btn = gr.Button(
+                "✅ Proceed and Save", variant="primary", visible=False
+            )
+            cancel_manual_adjustments_btn = gr.Button(
+                "Cancel", variant="secondary", visible=False
+            )
     
     return {
         "image_gen_platform": image_gen_platform,
@@ -264,6 +371,22 @@ def create_config_ui():
         "save_config_btn": save_config_btn,
         "edit_config_btn": edit_config_btn,
         "config_warning": config_warning,
+        "manual_linear_tolerance": manual_linear_tolerance,
+        "manual_rotation_tolerance": manual_rotation_tolerance,
+        "check_character_animations": check_character_animations,
+        "animated_character_location_tolerance": (
+            animated_character_location_tolerance
+        ),
+        "animated_character_dimensions_tolerance": (
+            animated_character_dimensions_tolerance
+        ),
+        "update_manual_adjustments_btn": update_manual_adjustments_btn,
+        "manual_adjustments_status": manual_adjustments_status,
+        "manual_adjustments_preview": manual_adjustments_preview,
+        "manual_adjustments_warnings": manual_adjustments_warnings,
+        "pending_manual_adjustments": pending_manual_adjustments,
+        "proceed_manual_adjustments_btn": proceed_manual_adjustments_btn,
+        "cancel_manual_adjustments_btn": cancel_manual_adjustments_btn,
         "md_title": md_title,
         "md_image_gen": md_image_gen,
         "md_sep1": md_sep1,
@@ -275,7 +398,7 @@ def create_config_ui():
     }
 
 
-def setup_config_handlers(config_components):
+def setup_config_handlers(config_components, blender_client=None):
     """Setup click handlers for configuration buttons.
     
     Args:
@@ -310,6 +433,22 @@ def setup_config_handlers(config_components):
     save_config_btn = config_components["save_config_btn"]
     edit_config_btn = config_components["edit_config_btn"]
     config_warning = config_components["config_warning"]
+    manual_linear_tolerance = config_components["manual_linear_tolerance"]
+    manual_rotation_tolerance = config_components["manual_rotation_tolerance"]
+    check_character_animations = config_components["check_character_animations"]
+    animated_character_location_tolerance = config_components[
+        "animated_character_location_tolerance"
+    ]
+    animated_character_dimensions_tolerance = config_components[
+        "animated_character_dimensions_tolerance"
+    ]
+    update_manual_adjustments_btn = config_components["update_manual_adjustments_btn"]
+    manual_adjustments_status = config_components["manual_adjustments_status"]
+    manual_adjustments_preview = config_components["manual_adjustments_preview"]
+    manual_adjustments_warnings = config_components["manual_adjustments_warnings"]
+    pending_manual_adjustments = config_components["pending_manual_adjustments"]
+    proceed_manual_adjustments_btn = config_components["proceed_manual_adjustments_btn"]
+    cancel_manual_adjustments_btn = config_components["cancel_manual_adjustments_btn"]
     md_title = config_components["md_title"]
     md_image_gen = config_components["md_image_gen"]
     md_sep1 = config_components["md_sep1"]
@@ -539,6 +678,228 @@ def setup_config_handlers(config_components):
             md_title, md_image_gen, md_sep1, md_reasoning,
             md_sep2, md_3d_services, md_sep3, md_project
         ],
+        concurrency_limit=None,
+        show_progress="hidden",
+    )
+
+    def scan_manual_adjustments(
+        project_dir_value,
+        linear_tolerance,
+        rotation_tolerance_degrees,
+        check_characters,
+        character_location_tolerance,
+        character_dimensions_tolerance,
+    ):
+        if blender_client is None:
+            return (
+                gr.update(value="⚠️ Blender client is unavailable.", visible=True),
+                gr.update(visible=False),
+                gr.update(value="", visible=False),
+                None,
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
+            )
+        plan = prepare_manual_adjustments(
+            project_dir_value,
+            blender_client,
+            linear_tolerance=linear_tolerance,
+            rotation_tolerance_degrees=rotation_tolerance_degrees,
+            check_character_animations=check_characters,
+            animated_character_location_tolerance=character_location_tolerance,
+            animated_character_dimensions_tolerance=character_dimensions_tolerance,
+        )
+        if not plan.get("success"):
+            return (
+                gr.update(value=f"⚠️ {plan.get('error', 'Scan failed.')}", visible=True),
+                gr.update(visible=False),
+                gr.update(value="", visible=False),
+                None,
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
+            )
+
+        count = plan.get("summary", {}).get("total_changes", 0)
+        warning_count = len(plan.get("warnings", []))
+        if count:
+            message = (
+                f"🔎 **Found {count} manual adjustment(s).** Review every item below, "
+                "then click **Proceed and Save**. No files have been written yet."
+            )
+            if warning_count:
+                message += f" The preview also contains {warning_count} warning(s)."
+        else:
+            message = (
+                "✅ **No meaningful manual adjustments found.** No files were written."
+            )
+            if warning_count:
+                message += f" Review the {warning_count} warning(s) below."
+        return (
+            gr.update(value=message, visible=True),
+            gr.update(value=plan["preview_rows"], visible=bool(count)),
+            gr.update(
+                value=plan["preview_warnings"],
+                visible=bool(warning_count),
+            ),
+            compact_pending_plan(plan),
+            gr.update(visible=bool(count)),
+            gr.update(visible=True),
+            gr.update(visible=True),
+        )
+
+    def proceed_manual_adjustments(
+        project_dir_value,
+        pending_plan,
+        linear_tolerance,
+        rotation_tolerance_degrees,
+        check_characters,
+        character_location_tolerance,
+        character_dimensions_tolerance,
+    ):
+        if blender_client is None:
+            return (
+                gr.update(value="⚠️ Blender client is unavailable.", visible=True),
+                gr.update(),
+                gr.update(),
+                pending_plan,
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+            )
+        result = commit_manual_adjustments(
+            project_dir_value,
+            pending_plan,
+            blender_client,
+            linear_tolerance=linear_tolerance,
+            rotation_tolerance_degrees=rotation_tolerance_degrees,
+            check_character_animations=check_characters,
+            animated_character_location_tolerance=character_location_tolerance,
+            animated_character_dimensions_tolerance=character_dimensions_tolerance,
+        )
+        if result.get("stale"):
+            fresh_plan = result.get("fresh_plan")
+            return (
+                gr.update(value=f"⚠️ {result['error']}", visible=True),
+                gr.update(
+                    value=format_preview_rows(fresh_plan),
+                    visible=bool(fresh_plan and fresh_plan.get("changes")),
+                ) if fresh_plan else gr.update(),
+                gr.update(
+                    value=format_preview_warnings(fresh_plan),
+                    visible=bool(fresh_plan and fresh_plan.get("warnings")),
+                ) if fresh_plan else gr.update(),
+                compact_pending_plan(fresh_plan) if fresh_plan else pending_plan,
+                gr.update(visible=bool(fresh_plan and fresh_plan.get("changes"))),
+                gr.update(visible=True),
+                gr.update(visible=True),
+            )
+        if not result.get("success"):
+            saved_paths = result.get("output_paths", [])
+            suffix = ""
+            if saved_paths:
+                suffix = "\n\nSaved JSON files:\n" + "\n".join(
+                    f"- `{path}`" for path in saved_paths
+                )
+            return (
+                gr.update(
+                    value=f"⚠️ {result.get('error', 'Update failed.')}{suffix}",
+                    visible=True,
+                ),
+                gr.update(),
+                gr.update(),
+                None if result.get("json_saved") else pending_plan,
+                gr.update(visible=not result.get("json_saved", False)),
+                gr.update(visible=not result.get("json_saved", False)),
+                gr.update(visible=True),
+            )
+
+        paths = "\n".join(f"- `{path}`" for path in result.get("output_paths", []))
+        warning_text = ""
+        if result.get("warnings"):
+            warning_text = f"\n\nCompleted with {len(result['warnings'])} preview warning(s)."
+        message = (
+            f"✅ **Manual adjustments saved successfully.**\n\n"
+            f"New JSON versions:\n{paths}\n\n"
+            f"Blend file saved last: `{result.get('blend_filepath')}`{warning_text}"
+        )
+        return (
+            gr.update(value=message, visible=True),
+            gr.update(),
+            gr.update(),
+            None,
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=True),
+        )
+
+    def cancel_manual_adjustments():
+        return (
+            gr.update(value="Manual adjustment update cancelled. No files were written.", visible=True),
+            gr.update(value=[], visible=False),
+            gr.update(value="", visible=False),
+            None,
+            gr.update(visible=False),
+            gr.update(visible=False),
+        )
+
+    update_manual_adjustments_btn.click(
+        fn=scan_manual_adjustments,
+        inputs=[
+            project_dir,
+            manual_linear_tolerance,
+            manual_rotation_tolerance,
+            check_character_animations,
+            animated_character_location_tolerance,
+            animated_character_dimensions_tolerance,
+        ],
+        outputs=[
+            manual_adjustments_status,
+            manual_adjustments_preview,
+            manual_adjustments_warnings,
+            pending_manual_adjustments,
+            proceed_manual_adjustments_btn,
+            cancel_manual_adjustments_btn,
+            update_manual_adjustments_btn,
+        ],
+        concurrency_limit=1,
+    )
+
+    proceed_manual_adjustments_btn.click(
+        fn=proceed_manual_adjustments,
+        inputs=[
+            project_dir,
+            pending_manual_adjustments,
+            manual_linear_tolerance,
+            manual_rotation_tolerance,
+            check_character_animations,
+            animated_character_location_tolerance,
+            animated_character_dimensions_tolerance,
+        ],
+        outputs=[
+            manual_adjustments_status,
+            manual_adjustments_preview,
+            manual_adjustments_warnings,
+            pending_manual_adjustments,
+            proceed_manual_adjustments_btn,
+            cancel_manual_adjustments_btn,
+            update_manual_adjustments_btn,
+        ],
+        concurrency_limit=1,
+    )
+
+    cancel_manual_adjustments_btn.click(
+        fn=cancel_manual_adjustments,
+        inputs=[],
+        outputs=[
+            manual_adjustments_status,
+            manual_adjustments_preview,
+            manual_adjustments_warnings,
+            pending_manual_adjustments,
+            proceed_manual_adjustments_btn,
+            cancel_manual_adjustments_btn,
+        ],
+        queue=False,
         concurrency_limit=None,
         show_progress="hidden",
     )
