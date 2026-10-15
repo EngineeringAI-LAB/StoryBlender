@@ -174,7 +174,7 @@ def _resize_asset_core(
     elif ext == '.fbx':
         bpy.ops.import_scene.fbx(filepath=path_to_model)
     elif ext == '.obj':
-        bpy.ops.import_scene.obj(filepath=path_to_model)
+        bpy.ops.wm.obj_import(filepath=path_to_model)
     else:
         raise ValueError(f"Unsupported file format: {ext}")
     

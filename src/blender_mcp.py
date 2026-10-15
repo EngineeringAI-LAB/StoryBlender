@@ -1270,7 +1270,7 @@ class BlenderMCPServer:
                         elif file_format == "fbx":
                             bpy.ops.import_scene.fbx(filepath=main_file_path)
                         elif file_format == "obj":
-                            bpy.ops.import_scene.obj(filepath=main_file_path)
+                            bpy.ops.wm.obj_import(filepath=main_file_path)
                         elif file_format == "blend":
                             # For blend files, we need to append or link
                             with bpy.data.libraries.load(main_file_path, link=False) as (data_from, data_to):

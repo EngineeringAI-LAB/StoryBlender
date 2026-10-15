@@ -282,8 +282,7 @@ def import_polyhaven_textures_as_plane(
             links.new(reroute_node.outputs[0], alpha_tex.inputs['Vector'])
             links.new(alpha_tex.outputs['Color'], bsdf_node.inputs['Alpha'])
             # Enable alpha blend mode
-            mat.blend_method = 'BLEND'
-            mat.shadow_method = 'CLIP'
+            mat.surface_render_method = 'BLENDED'
             print(f"✓ Connected Alpha texture")
             current_y -= y_spacing
         
@@ -1354,10 +1353,7 @@ def _enable_backface_culling(material):
     links.new(mix_shader_node.outputs['Shader'], output_node.inputs['Surface'])
     
     # Enable blend mode for transparency in Eevee
-    material.blend_method = 'BLEND'
-    # shadow_method was removed in Blender 4.0+
-    if hasattr(material, 'shadow_method'):
-        material.shadow_method = 'CLIP'
+    material.surface_render_method = 'BLENDED'
     
     # Enable backface culling in viewport settings as well
     material.use_backface_culling = True

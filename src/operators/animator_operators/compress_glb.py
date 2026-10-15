@@ -72,7 +72,7 @@ def compress_glb(input_path: str, export_path: str):
         ext = os.path.splitext(input_path)[1].lower()
         if ext in ['.glb', '.gltf']: bpy.ops.import_scene.gltf(filepath=input_path)
         elif ext == '.fbx': bpy.ops.import_scene.fbx(filepath=input_path)
-        elif ext == '.obj': bpy.ops.import_scene.obj(filepath=input_path)
+        elif ext == '.obj': bpy.ops.wm.obj_import(filepath=input_path)
 
         # Flatten Collections
         imported_objects = list(current_scene.collection.all_objects)
