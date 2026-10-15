@@ -63,7 +63,7 @@ zip -r storyblender.zip StoryBlender
 
 ### 2) Install in Blender
 
-In Blender (please use Blender 4.5 LTS, 5.0+ has compatible issues), go to:
+Use **Blender 5.2 LTS** (Python 3.13), then go to:
 
 `Edit` → `Preferences` → `Get Extensions` → *(top-right dropdown menu)* → `Install from Disk`
 
@@ -77,6 +77,27 @@ Please also refer to Blender's official add-on/extension documentation:
 In the StoryBlender panel, click:
 
 `Launch Gradio`
+
+For local troubleshooting, launch Blender from a terminal with `blender` so
+add-on and Gradio output remains visible. The Gradio UI is launched by the
+StoryBlender panel and runs in a separate process using Blender's Python.
+
+### Rebuild the bundled dependencies
+
+The extension includes pinned Python 3.13 wheels for macOS Apple Silicon,
+Windows x64, and Linux x64. Blender supplies NumPy; do not bundle or install a
+second NumPy into Blender. macOS dependencies require macOS 14 or later.
+
+With `pip` and `packaging` installed in your build Python, run:
+
+```bash
+python src/download_wheels.py
+python src/download_wheels.py --check
+```
+
+The downloader checks Python and ABI tags as well as platform tags. Old
+Python 3.11 binaries cannot satisfy a Python 3.13 dependency. The manifest is
+only refreshed after every supported platform passes validation.
 
 ---
 
