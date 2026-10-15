@@ -55,6 +55,31 @@ def check_server_actually_running(port):
 check_mcp_server_actually_running = check_server_actually_running
 
 
+def _ensure_mcp_server(scene):
+    """Start our own bridge, avoiding ports used by other Blender add-ons."""
+    if BlenderMCPServer is None:
+        raise RuntimeError("StoryBlender core module failed to load. Check the console.")
+    server = getattr(bpy.types, "blendermcp_server", None)
+    if server is None or not server.running:
+        port = scene.blendermcp_port
+        # A listening socket alone does not identify StoryBlender's protocol.
+        # In particular, the separate MCP extension also defaults to port 9876.
+        while check_server_actually_running(port):
+            if port == 65535:
+                raise RuntimeError("No free StoryBlender bridge port available")
+            port += 1
+        if port != scene.blendermcp_port:
+            print(f"StoryBlender bridge port {scene.blendermcp_port} is occupied; using {port}.")
+        server = BlenderMCPServer(port=port)
+        server.start()
+        if not server.running:
+            raise RuntimeError(f"Could not start StoryBlender bridge on port {port}")
+        bpy.types.blendermcp_server = server
+    scene.blendermcp_port = server.port
+    scene.blendermcp_server_running = True
+    return server.port
+
+
 def _find_python_executable():
     """Find the Python executable for subprocess use.
 
@@ -183,17 +208,11 @@ class BLENDERMCP_OT_StartServer(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
 
-        if BlenderMCPServer is None:
-            self.report({'ERROR'}, "StoryBlender core module failed to load. Check the console for details.")
+        try:
+            _ensure_mcp_server(scene)
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
-
-        # Create a new server instance
-        if not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server:
-            bpy.types.blendermcp_server = BlenderMCPServer(port=scene.blendermcp_port)
-
-        # Start the server
-        bpy.types.blendermcp_server.start()
-        scene.blendermcp_server_running = True
 
         return {'FINISHED'}
 
@@ -224,7 +243,11 @@ class BLENDERMCP_OT_LaunchGradio(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         port = scene.gradio_port
-        mcp_port = scene.blendermcp_port
+        try:
+            mcp_port = _ensure_mcp_server(scene)
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
 
         # Generate the URL
         url = f"http://127.0.0.1:{port}"
@@ -253,7 +276,7 @@ class BLENDERMCP_OT_LaunchGradio(bpy.types.Operator):
             # Launch Gradio as a subprocess — its threads live in a separate
             # process and cannot interfere with Blender's main thread.
             proc = subprocess.Popen(
-                [python_exe, app_script],
+                [python_exe, '-u', app_script],
                 env=env,
             )
             bpy.types.gradio_process = proc
@@ -373,7 +396,8 @@ def register():
             # Check MCP server status
             mcp_port = scene.blendermcp_port
             if scene.blendermcp_server_running:
-                if not check_server_actually_running(mcp_port):
+                server = getattr(bpy.types, "blendermcp_server", None)
+                if not server or not server.running:
                     # Server is not actually running, reset the status
                     print(f"MCP server status was 'running' but port {mcp_port} is not listening. Resetting status.")
                     scene.blendermcp_server_running = False
@@ -405,20 +429,7 @@ def register():
             return None
         try:
             scene = bpy.context.scene
-            port = scene.blendermcp_port
-
-            if check_server_actually_running(port):
-                scene.blendermcp_server_running = True
-                return None
-
-            if scene.blendermcp_server_running:
-                return None
-
-            if not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server:
-                bpy.types.blendermcp_server = BlenderMCPServer(port=port)
-
-            bpy.types.blendermcp_server.start()
-            scene.blendermcp_server_running = True
+            _ensure_mcp_server(scene)
         except Exception as e:
             print(f"Error auto-starting MCP server: {e}")
         return None

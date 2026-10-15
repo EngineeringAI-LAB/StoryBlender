@@ -2,6 +2,12 @@
 import importlib.util
 from pathlib import Path
 import bpy
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.operators.animator_operators.import_animated_assets_to_all_shots import (
+    _get_animation_frame_range, _find_root_motion_info,
+)
 
 spec = importlib.util.spec_from_file_location('compat', Path(__file__).resolve().parents[1] / 'src/blender_compat.py')
 compat = importlib.util.module_from_spec(spec)
@@ -29,12 +35,17 @@ assert len(curves_a) == len(curves_b) == 3
 assert {p.co.x for fc in curves_a for p in fc.keyframe_points} == {1, 25}
 assert {p.co.x for fc in curves_b for p in fc.keyframe_points} == {10, 60}
 assert not set(fc.as_pointer() for fc in curves_a) & set(fc.as_pointer() for fc in curves_b)
+assert _get_animation_frame_range(a) == (1, 25)
+assert _get_animation_frame_range(b) == (10, 60)
+assert tuple(_find_root_motion_info(a)['fcurves'].values()) == curves_a
+assert tuple(_find_root_motion_info(b)['fcurves'].values()) == curves_b
 # NLA can use a different slot from the active action.
 b.animation_data.action = None
 track = b.animation_data.nla_tracks.new()
 strip = track.strips.new('NLA Slot A', 1, action)
 strip.action_slot = slot_a
 assert compat.action_fcurves(strip.action, strip.action_slot) == curves_a
+assert tuple(_find_root_motion_info(b)['fcurves'].values()) == curves_a
 assert compat.action_fcurves(action, None) == ()
 assert compat.action_fcurves(None, slot_a) == ()
 print('PASS: multi-slot actions, object ownership, NLA slots, and missing actions')
