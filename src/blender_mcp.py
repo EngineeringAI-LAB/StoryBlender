@@ -17,6 +17,7 @@ import io
 import gc
 from contextlib import redirect_stdout, suppress
 from pathlib import Path
+from .blender_compat import action_fcurves
 
 # Wrap third-party imports in try/except so the addon can still register its
 # UI on platforms where wheels were not installed correctly (e.g. Windows).
@@ -2907,7 +2908,7 @@ class BlenderMCPServer:
             
             if camera_obj.animation_data and camera_obj.animation_data.action:
                 action = camera_obj.animation_data.action
-                fcurves = action.fcurves
+                fcurves = action_fcurves(action, camera_obj.animation_data.action_slot)
                 
                 if fcurves:
                     is_animated = True

@@ -15,6 +15,7 @@ import mimetypes
 from typing import Optional, List
 import math
 import mathutils
+from ...blender_compat import action_fcurves
 from PIL import Image, ImageDraw
 from bpy_extras.object_utils import world_to_camera_view
 
@@ -3364,7 +3365,7 @@ def create_and_place_camera_for_shot(
             
             # Set smooth interpolation (Bezier) for natural camera movement
             if cam_obj.animation_data and cam_obj.animation_data.action:
-                for fcurve in cam_obj.animation_data.action.fcurves:
+                for fcurve in action_fcurves(cam_obj.animation_data.action, cam_obj.animation_data.action_slot):
                     for keyframe in fcurve.keyframe_points:
                         keyframe.interpolation = 'BEZIER'
                         keyframe.handle_left_type = 'AUTO_CLAMPED'
@@ -3538,7 +3539,7 @@ def resume_camera(
             
             # Set smooth interpolation (Bezier) for natural camera movement
             if cam_obj.animation_data and cam_obj.animation_data.action:
-                for fcurve in cam_obj.animation_data.action.fcurves:
+                for fcurve in action_fcurves(cam_obj.animation_data.action, cam_obj.animation_data.action_slot):
                     for keyframe in fcurve.keyframe_points:
                         keyframe.interpolation = 'BEZIER'
                         keyframe.handle_left_type = 'AUTO_CLAMPED'

@@ -9,6 +9,7 @@ import shutil
 import math
 import re
 from typing import Optional, List, Dict, Any
+from ...blender_compat import action_fcurves
 
 # Movement categories — Walking/Running animations have natural root motion
 _MOVEMENT_CATEGORIES = {"Walking", "Running", "CrouchWalking"}
@@ -704,7 +705,7 @@ def _get_animation_frame_range(obj: bpy.types.Object) -> tuple:
                 min_f = min(min_f, strip.frame_start)
                 max_f = max(max_f, strip.frame_end)
         if ad.action:
-            for fcurve in ad.action.fcurves:
+            for fcurve in action_fcurves(ad.action, ad.action_slot):
                 for kp in fcurve.keyframe_points:
                     min_f = min(min_f, kp.co[0])
                     max_f = max(max_f, kp.co[0])
@@ -734,12 +735,12 @@ def _find_root_motion_info(obj: bpy.types.Object) -> Optional[dict]:
     _ROOT_BONE_NAMES = {"Hips", "mixamorig:Hips", "hip", "Root", "root",
                         "Spine", "pelvis", "Pelvis"}
 
-    def _search_action(action, owner):
+    def _search_action(action, owner, slot):
         if action is None:
             return None
         # Collect ALL bone location FCurves, grouped by bone name
         bones: Dict[str, Dict[int, Any]] = {}  # bone_name → {axis: fc}
-        for fc in action.fcurves:
+        for fc in action_fcurves(action, slot):
             if fc.data_path.endswith(".location") and "pose.bones" in fc.data_path:
                 try:
                     bname = fc.data_path.split('"')[1]
@@ -775,7 +776,7 @@ def _find_root_motion_info(obj: bpy.types.Object) -> Optional[dict]:
 
         # Priority 2: object-level location
         obj_loc = {}
-        for fc in action.fcurves:
+        for fc in action_fcurves(action, slot):
             if fc.data_path == "location":
                 obj_loc[fc.array_index] = fc
         if obj_loc:
@@ -793,10 +794,10 @@ def _find_root_motion_info(obj: bpy.types.Object) -> Optional[dict]:
             continue
         for track in (ad.nla_tracks or []):
             for strip in track.strips:
-                result = _search_action(strip.action, cand)
+                result = _search_action(strip.action, cand, strip.action_slot)
                 if result:
                     return result
-        result = _search_action(ad.action, cand)
+        result = _search_action(ad.action, cand, ad.action_slot)
         if result:
             return result
     return None
@@ -891,7 +892,7 @@ def _retarget_root_motion(
 
     # Force linear interpolation on the two tween keyframes we just inserted.
     if obj.animation_data and obj.animation_data.action:
-        for fc in obj.animation_data.action.fcurves:
+        for fc in action_fcurves(obj.animation_data.action, obj.animation_data.action_slot):
             if fc.data_path == "location":
                 for kp in fc.keyframe_points:
                     if kp.co[0] in (frame_start, frame_end):
