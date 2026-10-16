@@ -3705,7 +3705,7 @@ def _fetch_single_model_generation_only(
         # Download thumbnail and update URLs
         thumbnail_url = model_info["thumbnail_url"]
         result["thumbnail_web_url"] = thumbnail_url
-        downloaded_path = _download_thumbnail(thumbnail_url, output_dir, model_id)
+        downloaded_path = _download_thumbnail(thumbnail_url, output_dir, f"{model_id}_preview")
         result["thumbnail_url"] = downloaded_path if downloaded_path else thumbnail_url
 
         # Propagate image_prompt_scores from text_to_image_to_3d into reflection_log
@@ -3961,7 +3961,7 @@ def _fetch_single_model(
             # Download thumbnail and update URLs
             thumbnail_url = model_info["thumbnail_url"]
             result["thumbnail_web_url"] = thumbnail_url
-            downloaded_path = _download_thumbnail(thumbnail_url, output_dir, model_id)
+            downloaded_path = _download_thumbnail(thumbnail_url, output_dir, f"{model_id}_preview")
             result["thumbnail_url"] = downloaded_path if downloaded_path else thumbnail_url
 
             # Propagate image_prompt_scores from text_to_image_to_3d into reflection_log

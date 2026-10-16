@@ -57,14 +57,28 @@ class SupplementaryGenerationTests(unittest.TestCase):
                     args += [["lamp"]] + image_args
 
                 model_path = models / "lamp.glb"
+                source_image = models / "lamp.png"
+                attempts = []
+
+                def cloud_generation(**kwargs):
+                    attempts.append(kwargs)
+                    if len(attempts) == 1:
+                        raise RuntimeError("temporary cloud failure")
+                    source_image.write_bytes(b"generated source image")
+                    return {}
 
                 def download(**kwargs):
                     model_path.write_bytes(b"test model")
                     return {"model_path": str(model_path), "model_id": "test-task", "thumbnail_url": None}
 
-                with patch.object(artist, "text_to_image_to_3d", side_effect=[RuntimeError("temporary cloud failure"), {}]) as generate, \
+                def thumbnail(url, output_dir, model_id):
+                    path = Path(output_dir) / f"{model_id}.png"
+                    path.write_bytes(b"model preview")
+                    return str(path)
+
+                with patch.object(artist, "text_to_image_to_3d", side_effect=cloud_generation) as generate, \
                      patch.object(artist, "download_model_from_meshy", side_effect=download), \
-                     patch.object(artist, "_download_thumbnail", return_value=None), \
+                     patch.object(artist, "_download_thumbnail", side_effect=thumbnail), \
                      patch.object(artist, "_fetch_single_model_retrieval_only", side_effect=AssertionError("AI-only mode searched a library")):
                     list(callback(*args))
 
@@ -81,6 +95,8 @@ class SupplementaryGenerationTests(unittest.TestCase):
                 self.assertEqual(saved["scene_details"], source["scene_details"])
                 self.assertFalse(saved["asset_sheet"][0].get("error"))
                 self.assertEqual(step4.find_failed_supplementary_3d_ids(str(project)), [])
+                self.assertEqual(source_image.read_bytes(), b"generated source image")
+                self.assertTrue(saved["asset_sheet"][0]["thumbnail_url"].endswith("lamp_preview.png"))
 
 
 if __name__ == "__main__":
