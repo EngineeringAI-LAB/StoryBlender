@@ -3185,6 +3185,7 @@ def _generate_single_3d_from_image(
         return result
 
 
+@proxy_category("model_generation")
 def fetch_3d_from_image_prompt(
     image_prompt_result: Dict[str, Any],
     output_dir: str = "./models",
@@ -3379,6 +3380,8 @@ def fetch_3d_from_image_prompt(
                 asset["thumbnail_url"] = downloaded_path if downloaded_path else thumbnail_url
             if gen_result.get("error"):
                 asset["error"] = gen_result["error"]
+            elif gen_result.get("main_file_path"):
+                asset.pop("error", None)
     
     # Report results
     successful = sum(1 for r in model_results.values() if r.get("main_file_path"))

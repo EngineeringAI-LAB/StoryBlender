@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import threading
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -104,6 +105,25 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(FakeService.hits[-1], ("/local", None))
         for url in ("http://localhost:7862", "http://127.1.2.3", "http://[::1]", "http://service.localhost"):
             self.assertIsNone(get_proxy_url("model_generation", url))
+
+    def test_generated_model_preview_uses_generation_proxy_and_clears_old_error(self):
+        from operators.concept_artist_operators import concept_artist
+
+        self.select("model_generation")
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "asset.glb"
+            model.write_bytes(b"existing generated model")
+            source = {"asset_sheet": [{"asset_id": "asset", "image_prompt_path": str(model),
+                                       "error": "previous failed task"}]}
+            success = {"main_file_path": str(model), "thumbnail_url": "http://remote.invalid/preview.png",
+                       "error": None}
+            with patch.object(concept_artist, "_generate_single_3d_from_image", return_value=success):
+                result = concept_artist.fetch_3d_from_image_prompt(
+                    source, output_dir=directory, ai_platform="Meshy", max_concurrent=1)
+            asset = result["asset_sheet"][0]
+            self.assertEqual(FakeService.hits, [("http://remote.invalid/preview.png", None)])
+            self.assertTrue(Path(asset["thumbnail_url"]).is_file())
+            self.assertNotIn("error", asset)
 
     def test_parallel_categories_and_ambient_proxy_ignored(self):
         settings = self.select("model_generation")
