@@ -77,6 +77,7 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 kiwisolver==1.5.0
 loguru==0.7.3
+manifold3d==3.5.4
 markdown-it-py==4.0.0
 markupsafe==3.0.3
 marshmallow==3.26.2

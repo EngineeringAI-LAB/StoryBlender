@@ -68,6 +68,7 @@ jupyter_client @ file:///home/conda/feedstock_root/build_artifacts/jupyter_clien
 jupyter_core @ file:///home/conda/feedstock_root/build_artifacts/jupyter_core_1748333051527/work
 litellm==1.80.10
 loguru==0.7.3
+manifold3d==3.5.4
 markdown-it-py==4.0.0
 MarkupSafe==3.0.2
 marshmallow==3.26.1

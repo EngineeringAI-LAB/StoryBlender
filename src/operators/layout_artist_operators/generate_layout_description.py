@@ -750,7 +750,9 @@ class SceneLayoutVerifier:
                 mgr.add_object("b", self._meshes[b])
                 if mgr.in_collision_internal():
                     try:
-                        intersection = self._meshes[a].intersection(self._meshes[b])
+                        # Never auto-select Blender here: a background Blender can
+                        # reconcile and remove the live add-on's shared wheels.
+                        intersection = self._meshes[a].intersection(self._meshes[b], engine="manifold")
                         if intersection is not None and hasattr(intersection, 'volume') and intersection.volume > 0:
                             d_a = self.asset_dims.get(a, {"w": 1, "d": 1, "h": 1})
                             d_b = self.asset_dims.get(b, {"w": 1, "d": 1, "h": 1})

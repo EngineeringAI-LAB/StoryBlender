@@ -121,6 +121,7 @@ dependencies:
       - jsonschema-specifications==2025.4.1
       - kiwisolver==1.4.9
       - loguru==0.7.3
+      - manifold3d==3.5.4
       - markdown-it-py==4.0.0
       - markupsafe==3.0.2
       - marshmallow==3.26.1
