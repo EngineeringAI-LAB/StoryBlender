@@ -13,10 +13,10 @@ import logging
 from types import SimpleNamespace
 try:
     from ..proxy_transport import llm_client_args
-    from ..api_endpoints import normalize_openai_base
+    from ..api_endpoints import is_openrouter, normalize_openai_base
 except ImportError:
     from proxy_transport import llm_client_args
-    from api_endpoints import normalize_openai_base
+    from api_endpoints import is_openrouter, normalize_openai_base
 
 from any_llm import AnyLLM
 from any_llm.constants import LLMProvider
@@ -108,7 +108,12 @@ def _normalize_api_base(api_base, provider_key):
 
 def completion(model, messages, *, provider=None, api_key=None, api_base=None, client_args=None, **kwargs):
     """Drop-in replacement for any_llm.completion with proper session cleanup."""
-    if provider is None:
+    # OpenRouter's model vendor is separate from its OpenAI-compatible wire
+    # protocol. Some legacy vision helpers still supply a native vendor name.
+    if is_openrouter(api_base):
+        provider_key = LLMProvider.OPENAI
+        model_id = model
+    elif provider is None:
         provider_key, model_id = AnyLLM.split_model_provider(model)
     else:
         provider_key = LLMProvider.from_string(provider)

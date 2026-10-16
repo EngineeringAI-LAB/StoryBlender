@@ -28,6 +28,19 @@ class ImageApiTests(unittest.TestCase):
         for root in ("https://api.openrouter.ai/v1", "https://openrouter.ai", "https://openrouter.ai/api/v1/"):
             self.assertEqual(normalize_openai_base(root), "https://openrouter.ai/api/v1")
 
+    def test_openrouter_uses_openai_protocol_even_for_native_vendor_helpers(self):
+        from any_llm import AnyLLM
+        from operators.llm_completion import completion
+        llm = Mock()
+        llm.client = None
+        with patch("operators.llm_completion.llm_client_args", return_value=({}, [])), \
+             patch.object(AnyLLM, "create", return_value=llm) as create:
+            completion(model="anthropic/claude-haiku-5.5", provider="gemini", messages=[],
+                       api_base="https://api.openrouter.ai/v1", api_key="dummy")
+        self.assertEqual(str(create.call_args.args[0]), "openai")
+        self.assertEqual(create.call_args.kwargs["api_base"], "https://openrouter.ai/api/v1")
+        self.assertEqual(llm.completion.call_args.kwargs["model"], "anthropic/claude-haiku-5.5")
+
     def test_openrouter_uses_images_api_and_decodes_base64(self):
         with patch("operators.openai_image_client.requests.post", return_value=self.response) as post:
             image = generate_openai_image("dummy", "https://openrouter.ai/api/v1", "openai/test", "test")
