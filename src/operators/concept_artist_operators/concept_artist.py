@@ -48,6 +48,10 @@ except ImportError:
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from llm_completion import completion
+try:
+    from ..openai_image_client import generate_openai_image
+except ImportError:
+    from operators.openai_image_client import generate_openai_image
 from google import genai
 import asyncio
 import time
@@ -1159,39 +1163,7 @@ def generate_image_openai(openai_api_key, openai_api_base, model, prompt):
     Returns:
         PIL.Image: Generated image object, or None if no image was generated
     """
-    from PIL import Image
-
-    openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-    openai_api_base = (openai_api_base or os.getenv("OPENAI_API_BASE") or "").strip().rstrip("/")
-    if not openai_api_key:
-        raise RuntimeError("Missing OpenAI API key. Set OPENAI_API_KEY or fill it in the Configuration panel.")
-    if not openai_api_base or openai_api_base.lower() == "none":
-        raise RuntimeError("Missing OpenAI API base. Set OPENAI_API_BASE or fill it in the Configuration panel.")
-    if not openai_api_base.startswith(("http://", "https://")):
-        raise RuntimeError(f"Invalid OpenAI API base '{openai_api_base}'. It must start with http:// or https://.")
-    
-    url = f"{openai_api_base}/v1/images/generations"
-    
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "size": "960x960"
-    })
-    headers = {
-        'Authorization': f'Bearer {openai_api_key}',
-        'Content-Type': 'application/json'
-    }
-    
-    response = requests.post(url, headers=headers, data=payload, timeout=120)
-    response_data = response.json()
-    
-    if 'data' in response_data and len(response_data['data']) > 0:
-        image_url = response_data['data'][0]['url']
-        img_response = requests.get(image_url, timeout=120)
-        img = Image.open(BytesIO(img_response.content))
-        return img
-    
-    return None
+    return generate_openai_image(openai_api_key, openai_api_base, model, prompt)
 
 
 @proxy_category("image_generation")
@@ -1209,43 +1181,7 @@ def generate_image_openai_edit(openai_api_key, openai_api_base, model, prompt, i
     Returns:
         PIL.Image: Edited image object, or None if editing failed
     """
-    from PIL import Image
-
-    openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-    openai_api_base = (openai_api_base or os.getenv("OPENAI_API_BASE") or "").strip().rstrip("/")
-    if not openai_api_key:
-        raise RuntimeError("Missing OpenAI API key. Set OPENAI_API_KEY or fill it in the Configuration panel.")
-    if not openai_api_base or openai_api_base.lower() == "none":
-        raise RuntimeError("Missing OpenAI API base. Set OPENAI_API_BASE or fill it in the Configuration panel.")
-    if not openai_api_base.startswith(("http://", "https://")):
-        raise RuntimeError(f"Invalid OpenAI API base '{openai_api_base}'. It must start with http:// or https://.")
-    
-    url = f"{openai_api_base}/v1/images/edits"
-    
-    headers = {
-        'Authorization': f'Bearer {openai_api_key}',
-    }
-    
-    with open(image_path, 'rb') as img_file:
-        files = {
-            'image': (os.path.basename(image_path), img_file, 'image/png'),
-        }
-        data = {
-            'model': model,
-            'prompt': prompt,
-            'n': '1',
-        }
-        response = requests.post(url, headers=headers, files=files, data=data, timeout=120)
-    
-    response_data = response.json()
-    
-    if 'data' in response_data and len(response_data['data']) > 0:
-        image_url = response_data['data'][0]['url']
-        img_response = requests.get(image_url, timeout=120)
-        img = Image.open(BytesIO(img_response.content))
-        return img
-    
-    return None
+    return generate_openai_image(openai_api_key, openai_api_base, model, prompt, image_path)
 
 
 def generate_image(

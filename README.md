@@ -146,6 +146,15 @@ Required and optional values:
 - Optional: `STORYBLENDER_PROJECT_DIR`, an absolute project directory to pre-fill the UI.
 
 ### First row
+
+For OpenRouter, use `https://openrouter.ai/api/v1` for the AnyLLM and OpenAI
+image API bases, `openai` as the AnyLLM provider, and provider-qualified model
+IDs (for example `anthropic/claude-opus-5.5` and
+`openai/gpt-image-2.5-sunburst`). Select **OpenAI** for Image Generation Platform.
+OpenRouter image generation and reference-image editing use its dedicated
+Images API; standard OpenAI-compatible services retain their generation/edit
+endpoints. Both base64 and URL image responses are supported.
+
 - **Gemini Image Model**: name of Nano Banana (e.g. `gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview`). Note that currently Gemini is becoming very strict about copyright censorship, we are currently working on to incorporate more models to bypass this issue.
 - **Gemini API Key**: your API key
 - **Gemini API Base**: leave empty if you are using the official API

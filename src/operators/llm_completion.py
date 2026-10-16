@@ -13,8 +13,10 @@ import logging
 from types import SimpleNamespace
 try:
     from ..proxy_transport import llm_client_args
+    from ..api_endpoints import normalize_openai_base
 except ImportError:
     from proxy_transport import llm_client_args
+    from api_endpoints import normalize_openai_base
 
 from any_llm import AnyLLM
 from any_llm.constants import LLMProvider
@@ -98,9 +100,7 @@ def _normalize_api_base(api_base, provider_key):
         from any_llm.providers.openai.base import BaseOpenAIProvider
         provider_cls = AnyLLM.get_provider_class(provider_key)
         if issubclass(provider_cls, BaseOpenAIProvider):
-            api_base = api_base.rstrip('/')
-            if not api_base.endswith('/v1'):
-                api_base += '/v1'
+            api_base = normalize_openai_base(api_base)
     except Exception:
         pass
     return api_base
