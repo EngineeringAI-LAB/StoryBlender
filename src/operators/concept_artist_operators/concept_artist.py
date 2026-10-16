@@ -2943,6 +2943,8 @@ def fetch_image_prompt(
                 asset["image_prompt_score"] = gen_result["image_score"]
             if gen_result.get("error"):
                 asset["image_prompt_error"] = gen_result["error"]
+            elif gen_result.get("image_prompt_path"):
+                asset.pop("image_prompt_error", None)
             # Propagate image_prompt_scores into reflection_log
             if gen_result.get("image_prompt_scores"):
                 reflection_log = asset.get("reflection_log", {})
@@ -3032,6 +3034,8 @@ def fetch_image_prompt(
                 asset["image_prompt_score"] = gen_result["image_score"]
             if gen_result.get("error"):
                 asset["image_prompt_error"] = gen_result["error"]
+            elif gen_result.get("image_prompt_path"):
+                asset.pop("image_prompt_error", None)
             # Propagate image_prompt_scores into reflection_log
             if gen_result.get("image_prompt_scores"):
                 reflection_log = asset.get("reflection_log", {})
