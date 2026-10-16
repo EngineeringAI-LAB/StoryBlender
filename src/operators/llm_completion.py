@@ -10,6 +10,11 @@ Usage: replace `from any_llm import completion` with
 
 import asyncio
 import logging
+from types import SimpleNamespace
+try:
+    from ..proxy_transport import llm_client_args
+except ImportError:
+    from proxy_transport import llm_client_args
 
 from any_llm import AnyLLM
 from any_llm.constants import LLMProvider
@@ -60,6 +65,8 @@ def _close_client(llm):
         _aclose = client.aio.aclose
     elif hasattr(client, '_api_client') and hasattr(client._api_client, 'aclose'):
         _aclose = client._api_client.aclose
+    elif hasattr(client, 'aclose'):
+        _aclose = client.aclose
     else:
         return
 
@@ -108,11 +115,15 @@ def completion(model, messages, *, provider=None, api_key=None, api_base=None, c
         model_id = model
 
     api_base = _normalize_api_base(api_base, provider_key)
-    llm = AnyLLM.create(provider_key, api_key=api_key, api_base=api_base, **(client_args or {}))
+    routed_args, owned_clients = llm_client_args(provider_key, api_base, client_args)
+    llm = None
     try:
+        llm = AnyLLM.create(provider_key, api_key=api_key, api_base=api_base, **routed_args)
         return llm.completion(model=model_id, messages=messages, **kwargs)
     finally:
         _close_client(llm)
+        for client in owned_clients:
+            _close_client(SimpleNamespace(client=client))
 
 
 if __name__ == "__main__":

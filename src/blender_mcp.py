@@ -18,13 +18,18 @@ import gc
 from contextlib import redirect_stdout, suppress
 from pathlib import Path
 from .blender_compat import action_fcurves
+from .proxy_config import configure_proxy
+
 
 # Wrap third-party imports in try/except so the addon can still register its
 # UI on platforms where wheels were not installed correctly (e.g. Windows).
 try:
-    import requests
+    from .proxy_transport import requests_for, proxy_category
+    requests = requests_for("environment_assets")
 except ImportError:
     requests = None
+    def proxy_category(category):
+        return lambda function: function
     print("WARNING [StoryBlender]: 'requests' package not available. Some features will not work.")
 
 try:
@@ -257,6 +262,8 @@ class BlenderMCPServer:
 
     def _execute_command_internal(self, command):
         """Internal command execution with proper context"""
+        if "proxy_settings" in command:
+            configure_proxy(command["proxy_settings"])
         cmd_type = command.get("type")
         params = command.get("params", {})
 
@@ -968,6 +975,8 @@ class BlenderMCPServer:
         }
 
 
+    @proxy_category(lambda self, asset_id, asset_type, *args, **kwargs:
+                    "asset_retrieval" if asset_type == "models" else "environment_assets")
     def download_polyhaven_asset(self, asset_id, asset_type, resolution="2k", file_format=None):
         try:
             # First get the files information
@@ -1307,6 +1316,7 @@ class BlenderMCPServer:
             return {"error": f"Failed to download asset: {str(e)}"}
 
 
+    @proxy_category("environment_assets")
     def lighting_designer(self, scene_description=None, asset_id=None, categories_limitation=None, anyllm_api_key=None, anyllm_api_base=None, anyllm_provider="gemini", vision_model="gemini-3-flash-preview"):
         """
         Design lighting for a scene using AI-selected HDRIs from Polyhaven.
@@ -1549,6 +1559,7 @@ class BlenderMCPServer:
             return {"error": f"Failed to set render: {str(e)}"}
 
 
+    @proxy_category("environment_assets")
     def environment_artist(self, ground_description=None, asset_id=None, categories_limitation=None, width=10.0, depth=10.0,
                            wall_description=None, wall_asset_id=None, wall_categories_limitation=None,
                            wall_x=None, wall_x_negative=None, wall_y=None, wall_y_negative=None, wall_z=None,

@@ -5,8 +5,10 @@ import gradio as gr
 
 try:
     from ..env_config import get_env, get_int_env
+    from ..proxy_config import PROXY_CATEGORIES, PROXY_PROTOCOLS, ProxySettings, configure_proxy, get_proxy_settings
 except ImportError:
     from env_config import get_env, get_int_env
+    from proxy_config import PROXY_CATEGORIES, PROXY_PROTOCOLS, ProxySettings, configure_proxy, get_proxy_settings
 
 from .manual_adjustments import (
     compact_pending_plan,
@@ -29,6 +31,29 @@ def create_config_ui():
         A dictionary containing all configuration components.
     """
     md_title = gr.Markdown("## Configuration")
+    proxy_defaults = get_proxy_settings()
+    with gr.Group() as proxy_group:
+        gr.Markdown("### Proxy")
+        gr.Markdown("Select the services that should use your proxy. Unchecked services connect directly. "
+                    "Localhost services always connect directly. Apply changes with **Save Configuration**.")
+        with gr.Row():
+            proxy_host = gr.Textbox(label="Server Address", value=proxy_defaults.host,
+                                    info="Hostname or IP address, without a protocol or port")
+            proxy_protocol = gr.Dropdown(label="Proxy Protocol", choices=list(PROXY_PROTOCOLS),
+                                         value=proxy_defaults.protocol)
+            proxy_port = gr.Number(label="Port", value=proxy_defaults.port, precision=0)
+        with gr.Row():
+            proxy_username = gr.Textbox(label="Username", value=proxy_defaults.username,
+                                        placeholder="Optional")
+            proxy_password = gr.Textbox(label="Password", value=proxy_defaults.password,
+                                        type="password", placeholder="Optional")
+        proxy_categories = gr.CheckboxGroup(
+            label="Use proxy for", choices=[(label, key) for key, label in PROXY_CATEGORIES.items()],
+            value=sorted(proxy_defaults.categories),
+            info="3D generation includes submission, polling, and generated model downloads. "
+                 "Image generation uses its own selection.")
+        gr.Markdown("Credentials are kept in this running session; they are not saved in story files.")
+    proxy_status = gr.Markdown(proxy_defaults.summary())
     
     md_image_gen = gr.Markdown("### Image Generation")
     with gr.Row():
@@ -342,6 +367,14 @@ def create_config_ui():
             )
     
     return {
+        "proxy_group": proxy_group,
+        "proxy_host": proxy_host,
+        "proxy_protocol": proxy_protocol,
+        "proxy_port": proxy_port,
+        "proxy_username": proxy_username,
+        "proxy_password": proxy_password,
+        "proxy_categories": proxy_categories,
+        "proxy_status": proxy_status,
         "image_gen_platform": image_gen_platform,
         "gemini_image_model": gemini_image_model,
         "gemini_api_key": gemini_api_key,
@@ -458,228 +491,58 @@ def setup_config_handlers(config_components, blender_client=None):
     md_sep3 = config_components["md_sep3"]
     md_project = config_components["md_project"]
     
-    def validate_and_save(project_dir_value):
-        """Validate project_dir and save configuration if valid."""
-        # Strip wrapping single quotes (macOS), backticks, or double quotes (Windows) from path
-        if project_dir_value:
-            project_dir_value = project_dir_value.strip()
-            if (project_dir_value.startswith("'") and project_dir_value.endswith("'")) or \
-               (project_dir_value.startswith('`') and project_dir_value.endswith('`')) or \
-               (project_dir_value.startswith('"') and project_dir_value.endswith('"')):
-                project_dir_value = project_dir_value[1:-1]
-        # Check if project_dir is empty or not an absolute path
-        if not project_dir_value or not project_dir_value.strip():
-            return (
-                gr.update(),  # image_gen_platform
-                gr.update(),  # gemini_image_model
-                gr.update(),  # reasoning_model
-                gr.update(),  # vision_model
-                gr.update(),  # gemini_api_key
-                gr.update(),  # gemini_api_base
-                gr.update(),  # openai_api_key
-                gr.update(),  # openai_api_base
-                gr.update(),  # openai_image_model
-                gr.update(),  # anyllm_api_key
-                gr.update(),  # anyllm_api_base
-                gr.update(),  # anyllm_provider
-                gr.update(),  # sketchfab_api_key
-                gr.update(),  # meshy_api_key
-                gr.update(),  # meshy_model
-                gr.update(),  # uthana_api_key
-                gr.update(),  # uthana_fps
-                gr.update(),  # tencent_secret_id
-                gr.update(),  # tencent_secret_key
-                gr.update(),  # trellis2_api_base
-                gr.update(),  # trellis2_max_concurrent
-                gr.update(),  # trellis2_texture_size
-                gr.update(),  # trellis2_resolution
-                gr.update(),  # trellis2_decimation_target
-                gr.update(),  # ai_platform
-                gr.update(),  # project_dir
-                gr.update(),  # save_config_btn
-                gr.update(),  # edit_config_btn
-                gr.update(value="⚠️ **Warning:** Project Directory cannot be empty. Please provide a valid absolute path.", visible=True),  # config_warning
-                gr.update(),  # md_title
-                gr.update(),  # md_image_gen
-                gr.update(),  # md_sep1
-                gr.update(),  # md_reasoning
-                gr.update(),  # md_sep2
-                gr.update(),  # md_3d_services
-                gr.update(),  # md_sep3
-                gr.update(),  # md_project
-            )
-        
-        if not os.path.isabs(project_dir_value.strip()):
-            return (
-                gr.update(),  # image_gen_platform
-                gr.update(),  # gemini_image_model
-                gr.update(),  # reasoning_model
-                gr.update(),  # vision_model
-                gr.update(),  # gemini_api_key
-                gr.update(),  # gemini_api_base
-                gr.update(),  # openai_api_key
-                gr.update(),  # openai_api_base
-                gr.update(),  # openai_image_model
-                gr.update(),  # anyllm_api_key
-                gr.update(),  # anyllm_api_base
-                gr.update(),  # anyllm_provider
-                gr.update(),  # sketchfab_api_key
-                gr.update(),  # meshy_api_key
-                gr.update(),  # meshy_model
-                gr.update(),  # uthana_api_key
-                gr.update(),  # uthana_fps
-                gr.update(),  # tencent_secret_id
-                gr.update(),  # tencent_secret_key
-                gr.update(),  # trellis2_api_base
-                gr.update(),  # trellis2_max_concurrent
-                gr.update(),  # trellis2_texture_size
-                gr.update(),  # trellis2_resolution
-                gr.update(),  # trellis2_decimation_target
-                gr.update(),  # ai_platform
-                gr.update(),  # project_dir
-                gr.update(),  # save_config_btn
-                gr.update(),  # edit_config_btn
-                gr.update(value=f"⚠️ **Warning:** '{project_dir_value}' is not an absolute path. Please provide a path starting with '/'.", visible=True),  # config_warning
-                gr.update(),  # md_title
-                gr.update(),  # md_image_gen
-                gr.update(),  # md_sep1
-                gr.update(),  # md_reasoning
-                gr.update(),  # md_sep2
-                gr.update(),  # md_3d_services
-                gr.update(),  # md_sep3
-                gr.update(),  # md_project
-            )
-        
-        # Add project_dir to Gradio's static paths so files can be served
-        # This allows the app to serve files from the working directory after launch
-        project_path = project_dir_value.strip()
-        gr.set_static_paths(paths=[project_path])
-        
-        # Validation passed, proceed with saving
-        return (
-            gr.update(visible=False),  # image_gen_platform
-            gr.update(visible=False),  # gemini_image_model
-            gr.update(visible=False),  # reasoning_model
-            gr.update(visible=False),  # vision_model
-            gr.update(visible=False),  # gemini_api_key
-            gr.update(visible=False),  # gemini_api_base
-            gr.update(visible=False),  # openai_api_key
-            gr.update(visible=False),  # openai_api_base
-            gr.update(visible=False),  # openai_image_model
-            gr.update(visible=False),  # anyllm_api_key
-            gr.update(visible=False),  # anyllm_api_base
-            gr.update(visible=False),  # anyllm_provider
-            gr.update(visible=False),  # sketchfab_api_key
-            gr.update(visible=False),  # meshy_api_key
-            gr.update(visible=False),  # meshy_model
-            gr.update(visible=False),  # uthana_api_key
-            gr.update(visible=False),  # uthana_fps
-            gr.update(visible=False),  # tencent_secret_id
-            gr.update(visible=False),  # tencent_secret_key
-            gr.update(visible=False),  # trellis2_api_base
-            gr.update(visible=False),  # trellis2_max_concurrent
-            gr.update(visible=False),  # trellis2_texture_size
-            gr.update(visible=False),  # trellis2_resolution
-            gr.update(visible=False),  # trellis2_decimation_target
-            gr.update(visible=False),  # ai_platform
-            gr.update(value=project_path, visible=False),  # project_dir
-            gr.update(visible=False),  # save_config_btn
-            gr.update(visible=True),   # edit_config_btn
-            gr.update(visible=False),  # config_warning - hide warning on success
-            gr.update(visible=False),  # md_title
-            gr.update(visible=False),  # md_image_gen
-            gr.update(visible=False),  # md_sep1
-            gr.update(visible=False),  # md_reasoning
-            gr.update(visible=False),  # md_sep2
-            gr.update(visible=False),  # md_3d_services
-            gr.update(visible=False),  # md_sep3
-            gr.update(visible=False),  # md_project
-        )
-    
-    # Save Configuration button click handler
+    editable = [
+        image_gen_platform, gemini_image_model, reasoning_model, vision_model,
+        gemini_api_key, gemini_api_base, openai_api_key, openai_api_base, openai_image_model,
+        anyllm_api_key, anyllm_api_base, anyllm_provider, sketchfab_api_key,
+        meshy_api_key, meshy_model, uthana_api_key, uthana_fps,
+        tencent_secret_id, tencent_secret_key, trellis2_api_base, trellis2_max_concurrent,
+        trellis2_texture_size, trellis2_resolution, trellis2_decimation_target, ai_platform,
+        project_dir, save_config_btn, md_title, md_image_gen, md_sep1, md_reasoning,
+        md_sep2, md_3d_services, md_sep3, md_project, config_components["proxy_group"],
+    ]
+    proxy_inputs = [config_components[name] for name in (
+        "proxy_host", "proxy_protocol", "proxy_port", "proxy_username", "proxy_password", "proxy_categories"
+    )]
+    proxy_status = config_components["proxy_status"]
+    outputs = editable + [edit_config_btn, config_warning, proxy_status]
+
+    def validate_and_save(project_dir_value, host, protocol, port, username, password, categories):
+        project_path = (project_dir_value or "").strip()
+        if len(project_path) >= 2 and project_path[0] == project_path[-1] and project_path[0] in "'\"`":
+            project_path = project_path[1:-1].strip()
+        try:
+            if not project_path:
+                raise ValueError("Project Directory cannot be empty. Please provide a valid absolute path.")
+            if not os.path.isabs(project_path):
+                raise ValueError("Project Directory must be an absolute path.")
+            settings = ProxySettings(host, protocol, port, username, password, categories)
+            gr.set_static_paths(paths=[project_path])
+        except ValueError as exc:
+            return {config_warning: gr.update(value=f"⚠️ **Warning:** {exc}", visible=True)}
+        configure_proxy(settings)
+        updates = {component: gr.update(visible=False) for component in editable}
+        updates.update({
+            project_dir: gr.update(value=project_path, visible=False),
+            edit_config_btn: gr.update(visible=True),
+            config_warning: gr.update(visible=False),
+            proxy_status: gr.update(value=settings.summary()),
+        })
+        return updates
+
     save_config_btn.click(
-        fn=validate_and_save,
-        inputs=[project_dir],
-        outputs=[
-            image_gen_platform,
-            gemini_image_model, reasoning_model, vision_model,
-            gemini_api_key, gemini_api_base,
-            openai_api_key, openai_api_base, openai_image_model,
-            anyllm_api_key, anyllm_api_base, anyllm_provider,
-            sketchfab_api_key, meshy_api_key, meshy_model,
-            uthana_api_key, uthana_fps,
-            tencent_secret_id, tencent_secret_key,
-            trellis2_api_base, trellis2_max_concurrent, trellis2_texture_size,
-            trellis2_resolution, trellis2_decimation_target,
-            ai_platform,
-            project_dir, save_config_btn, edit_config_btn, config_warning,
-            md_title, md_image_gen, md_sep1, md_reasoning,
-            md_sep2, md_3d_services, md_sep3, md_project
-        ],
-        concurrency_limit=None,
-        show_progress="hidden",
+        fn=validate_and_save, inputs=[project_dir] + proxy_inputs, outputs=outputs,
+        concurrency_limit=None, show_progress="hidden",
     )
-    
-    # Edit Configuration button click handler
+
+    def edit_configuration():
+        updates = {component: gr.update(visible=True) for component in editable}
+        updates.update({edit_config_btn: gr.update(visible=False), config_warning: gr.update(visible=False)})
+        return updates
+
     edit_config_btn.click(
-        fn=lambda: (
-            gr.update(visible=True),   # image_gen_platform
-            gr.update(visible=True),   # gemini_image_model
-            gr.update(visible=True),   # reasoning_model
-            gr.update(visible=True),   # vision_model
-            gr.update(visible=True),   # gemini_api_key
-            gr.update(visible=True),   # gemini_api_base
-            gr.update(visible=True),   # openai_api_key
-            gr.update(visible=True),   # openai_api_base
-            gr.update(visible=True),   # openai_image_model
-            gr.update(visible=True),   # anyllm_api_key
-            gr.update(visible=True),   # anyllm_api_base
-            gr.update(visible=True),   # anyllm_provider
-            gr.update(visible=True),   # sketchfab_api_key
-            gr.update(visible=True),   # meshy_api_key
-            gr.update(visible=True),   # meshy_model
-            gr.update(visible=True),   # uthana_api_key
-            gr.update(visible=True),   # uthana_fps
-            gr.update(visible=True),   # tencent_secret_id
-            gr.update(visible=True),   # tencent_secret_key
-            gr.update(visible=True),   # trellis2_api_base
-            gr.update(visible=True),   # trellis2_max_concurrent
-            gr.update(visible=True),   # trellis2_texture_size
-            gr.update(visible=True),   # trellis2_resolution
-            gr.update(visible=True),   # trellis2_decimation_target
-            gr.update(visible=True),   # ai_platform
-            gr.update(visible=True),   # project_dir
-            gr.update(visible=True),   # save_config_btn
-            gr.update(visible=False),  # edit_config_btn
-            gr.update(visible=False),  # config_warning - hide warning when editing
-            gr.update(visible=True),   # md_title
-            gr.update(visible=True),   # md_image_gen
-            gr.update(visible=True),   # md_sep1
-            gr.update(visible=True),   # md_reasoning
-            gr.update(visible=True),   # md_sep2
-            gr.update(visible=True),   # md_3d_services
-            gr.update(visible=True),   # md_sep3
-            gr.update(visible=True),   # md_project
-        ),
-        inputs=[],
-        outputs=[
-            image_gen_platform,
-            gemini_image_model, reasoning_model, vision_model,
-            gemini_api_key, gemini_api_base,
-            openai_api_key, openai_api_base, openai_image_model,
-            anyllm_api_key, anyllm_api_base, anyllm_provider,
-            sketchfab_api_key, meshy_api_key, meshy_model,
-            uthana_api_key, uthana_fps,
-            tencent_secret_id, tencent_secret_key,
-            trellis2_api_base, trellis2_max_concurrent, trellis2_texture_size,
-            trellis2_resolution, trellis2_decimation_target,
-            ai_platform,
-            project_dir, save_config_btn, edit_config_btn, config_warning,
-            md_title, md_image_gen, md_sep1, md_reasoning,
-            md_sep2, md_3d_services, md_sep3, md_project
-        ],
-        concurrency_limit=None,
-        show_progress="hidden",
+        fn=edit_configuration, inputs=[], outputs=outputs,
+        concurrency_limit=None, show_progress="hidden",
     )
 
     def scan_manual_adjustments(

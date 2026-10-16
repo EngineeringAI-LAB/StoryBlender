@@ -5,7 +5,11 @@ except ImportError:
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from llm_completion import completion
-import requests
+try:
+    from ...proxy_transport import requests_for
+except ImportError:
+    from proxy_transport import requests_for
+requests = requests_for("environment_assets")
 import gc
 import warnings
 from pathlib import Path

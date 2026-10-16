@@ -101,7 +101,11 @@ def _fix_hf_cache_metadata(cache_dir: str) -> None:
 from typing import Dict, List, Any, Optional, Literal
 
 import ssl
-import requests
+try:
+    from ....proxy_transport import requests_for
+except ImportError:
+    from proxy_transport import requests_for
+requests = requests_for("asset_retrieval")
 import numpy as np
 try:
     from fastembed import TextEmbedding

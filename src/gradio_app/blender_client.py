@@ -4,6 +4,10 @@ import os
 import socket
 import json
 import time
+try:
+    from ..proxy_config import get_proxy_settings
+except ImportError:
+    from proxy_config import get_proxy_settings
 
 # Try to import bpy - will only work when running inside Blender
 try:
@@ -204,7 +208,8 @@ class BlenderClient:
         """
         command = {
             "type": command_type,
-            "params": params or {}
+            "params": params or {},
+            "proxy_settings": get_proxy_settings().to_dict()
         }
         
         try:

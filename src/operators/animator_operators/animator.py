@@ -13,13 +13,16 @@ import csv
 import json
 import base64
 import tempfile
-import urllib.request
 import uuid
 import warnings
 import threading
 import time
 
-import requests
+try:
+    from ...proxy_transport import requests_for
+except ImportError:
+    from proxy_transport import requests_for
+requests = requests_for("animation")
 from requests.exceptions import RequestException, ProxyError, ConnectionError
 from pydantic import BaseModel
 try:
@@ -150,7 +153,11 @@ def gif_to_mp4(url_or_path: str) -> str:
             
             for attempt in range(max_retries):
                 try:
-                    urllib.request.urlretrieve(url_or_path, temp_gif_path)
+                    with requests.get(url_or_path, stream=True, timeout=120) as response:
+                        response.raise_for_status()
+                        with open(temp_gif_path, "wb") as output:
+                            for chunk in response.iter_content(chunk_size=65536):
+                                output.write(chunk)
                     break  # Success, exit retry loop
                 except Exception as e:
                     if attempt == max_retries - 1:

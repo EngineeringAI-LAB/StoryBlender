@@ -105,6 +105,28 @@ only refreshed after every supported platform passes validation.
 
 After launching Gradio, fill in the following fields in the **Configuration** section.
 
+### Optional: per-service proxy
+
+The **Proxy** section appears first in Configuration. The defaults are HTTP,
+`127.0.0.1:7897`, with no authentication and all services unchecked. HTTP,
+HTTPS, and SOCKS5 proxies are supported; SOCKS5 resolves remote names through
+the proxy. Username and password are optional.
+
+Select **LLM (Reasoning & Vision)**, **Image Generation**, **3D Model Retrieval**,
+**3D Model Generation**, **Animation & Rigging**, or **HDRI & Textures**, then
+click **Save Configuration**. Unchecked services connect directly, independently
+of shell/system proxy variables. Localhost services (including local TRELLIS2
+and the Blender bridge) always connect directly. Submission, polling, uploads,
+and downloads follow their service category; image generation inside a 3D
+workflow follows the Image Generation selection.
+
+LLM routing supports Gemini/Vertex AI, OpenAI-compatible providers, Anthropic,
+Azure, and Ollama. Other SDKs report an error if proxy routing is requested.
+Changes apply to subsequent requests in this running session. Passwords are
+masked in the UI and are never written to story files. To pre-fill proxy values
+after restarting, use the optional `STORYBLENDER_PROXY_*` entries in your private
+`.env` file; saving Configuration does not write credentials to disk.
+
 ### Optional: auto-fill settings with `.env`
 
 For easier local testing, you can keep your API keys and preferred defaults in a private `.env` file. StoryBlender loads it automatically before building the Gradio UI, so the Configuration fields are pre-filled when you launch from Blender.

@@ -16,7 +16,11 @@ import os
 import json
 import struct
 import time
-import requests
+try:
+    from ...proxy_transport import requests_for
+except ImportError:
+    from proxy_transport import requests_for
+requests = requests_for("animation")
 from typing import Any, Dict, List, Optional, Tuple
 from copy import deepcopy
 

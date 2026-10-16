@@ -32,7 +32,15 @@ import os
 from typing import Optional, Union, List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
-import requests
+try:
+    from ...proxy_transport import requests_for, proxy_category, genai_http_options
+except ImportError:
+    from proxy_transport import requests_for, proxy_category, genai_http_options
+requests = requests_for("asset_retrieval")
+try:
+    from ...proxy_config import get_proxy_url
+except ImportError:
+    from proxy_config import get_proxy_url
 import re
 try:
     from ..llm_completion import completion
@@ -1097,6 +1105,7 @@ def _close_genai_client(client):
         pass
 
 
+@proxy_category("image_generation")
 def generate_image_gemini(gemini_api_key, gemini_api_base, model, prompt):
     """
     Generate an image using Google Gemini API.
@@ -1114,10 +1123,10 @@ def generate_image_gemini(gemini_api_key, gemini_api_base, model, prompt):
     if gemini_api_base:
         client = genai.Client(
             api_key=gemini_api_key,
-            http_options={'base_url': gemini_api_base}
+            http_options=genai_http_options("image_generation", gemini_api_base)
         )
     else:
-        client = genai.Client(api_key=gemini_api_key)
+        client = genai.Client(api_key=gemini_api_key, http_options=genai_http_options("image_generation"))
     
     try:
         # Generate content
@@ -1136,6 +1145,7 @@ def generate_image_gemini(gemini_api_key, gemini_api_base, model, prompt):
         _close_genai_client(client)
 
 
+@proxy_category("image_generation")
 def generate_image_openai(openai_api_key, openai_api_base, model, prompt):
     """
     Generate an image using OpenAI API (OpenAI-compatible images/generations endpoint).
@@ -1184,6 +1194,7 @@ def generate_image_openai(openai_api_key, openai_api_base, model, prompt):
     return None
 
 
+@proxy_category("image_generation")
 def generate_image_openai_edit(openai_api_key, openai_api_base, model, prompt, image_path):
     """
     Edit an image using OpenAI API (OpenAI-compatible images/edits endpoint).
@@ -1279,6 +1290,7 @@ def generate_image(
         )
 
 
+@proxy_category("model_generation")
 def text_to_3d_meshy(
     prompt: str,
     *,
@@ -1541,6 +1553,7 @@ def text_to_3d_meshy(
         time.sleep(poll_interval)
 
 
+@proxy_category("model_generation")
 def image_to_3d_meshy(
     image_url: str,
     *,
@@ -1720,6 +1733,7 @@ def image_to_3d_meshy(
         time.sleep(poll_interval)
 
 
+@proxy_category("model_generation")
 def image_to_3d_trellis2(
     image_url: str,
     *,
@@ -1785,6 +1799,7 @@ class Hunyuan3DAPIError(RuntimeError):
     """Raised when the Hunyuan3D API returns an error or the task fails."""
 
 
+@proxy_category("model_generation")
 def image_to_3d_hunyuan3d(
     tencent_secret_id: str,
     tencent_secret_key: str,
@@ -1846,11 +1861,13 @@ def image_to_3d_hunyuan3d(
         
         httpProfile = HttpProfile()
         httpProfile.endpoint = "ai3d.tencentcloudapi.com"
+        httpProfile.proxy = get_proxy_url("model_generation", "https://ai3d.tencentcloudapi.com")
         
         clientProfile = ClientProfile()
         clientProfile.httpProfile = httpProfile
         
         client = ai3d_client.Ai3dClient(cred, "ap-guangzhou", clientProfile)
+        client.request._session.trust_env = False
 
         # Submit job request
         req = models.SubmitHunyuanTo3DProJobRequest()
@@ -1941,6 +1958,7 @@ def image_to_3d_hunyuan3d(
         raise Hunyuan3DAPIError(f"Tencent Cloud SDK error: {err}")
 
 
+@proxy_category("model_generation")
 def _download_chunk(
     url: str,
     start: int,
@@ -1969,6 +1987,7 @@ def _download_chunk(
             retry_delay *= 2
 
 
+@proxy_category("model_generation")
 def download_model_from_hunyuan3d(
     task_result: Dict[str, Any],
     output_path: str = "./model.glb",
@@ -2081,6 +2100,7 @@ def download_model_from_hunyuan3d(
     }
 
 
+@proxy_category("model_generation")
 def text_to_image_to_3d(
     prompt: str,
     *,
@@ -2349,6 +2369,7 @@ def text_to_image_to_3d(
     return result
 
 
+@proxy_category("model_generation")
 def download_model_from_meshy(
     task_result: Dict[str, Any],
     output_path: str = "./model.glb",
@@ -2416,6 +2437,7 @@ def download_model_from_meshy(
     return model_info
 
 
+@proxy_category("model_generation")
 def download_model_from_trellis2(
     task_result: Dict[str, Any],
     output_path: str = "./model.glb",
@@ -2618,6 +2640,7 @@ def _generate_single_image_prompt(
     return result
 
 
+@proxy_category("image_generation")
 def _generate_single_image_prompt_by_editing_image(
     model_id: str,
     prompt: str,
@@ -2716,10 +2739,10 @@ Important:
         if gemini_api_base:
             client = genai.Client(
                 api_key=gemini_api_key,
-                http_options={'base_url': gemini_api_base}
+                http_options=genai_http_options("image_generation", gemini_api_base)
             )
         else:
-            client = genai.Client(api_key=gemini_api_key)
+            client = genai.Client(api_key=gemini_api_key, http_options=genai_http_options("image_generation"))
     
     try:
         for attempt in range(max_retries):
@@ -3097,6 +3120,7 @@ def fetch_image_prompt(
     return result
 
 
+@proxy_category("model_generation")
 def _generate_single_3d_from_image(
     model_id: str,
     image_path: str,
@@ -3605,6 +3629,7 @@ def _fetch_single_model_retrieval_only(
 
 
 # Fetch a single model using only AI generation (Hunyuan3D/Meshy).
+@proxy_category("model_generation")
 def _fetch_single_model_generation_only(
     model_id: str,
     model_metadata: Dict[str, Any],

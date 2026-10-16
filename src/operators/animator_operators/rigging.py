@@ -7,7 +7,11 @@ from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 
-import requests
+try:
+    from ...proxy_transport import requests_for
+except ImportError:
+    from proxy_transport import requests_for
+requests = requests_for("animation")
 from requests.exceptions import RequestException, ProxyError, ConnectionError
 from pygltflib import GLTF2
 from PIL import Image
