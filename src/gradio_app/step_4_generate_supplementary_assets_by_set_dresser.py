@@ -285,7 +285,11 @@ def generate_supplementary_3d_assets(
     trellis2_decimation_target=1000000,
     vision_model="gemini/gemini-2.5-flash",
     model_id_list=None,
-    force_genai=False
+    force_genai=False,
+    image_gen_platform="Gemini",
+    openai_api_key=None,
+    openai_api_base=None,
+    openai_image_model="gpt-image-2",
 ):
     """Generate 3D supplementary assets using fetch_model.
     
@@ -359,6 +363,10 @@ def generate_supplementary_3d_assets(
             anyllm_provider=anyllm_provider,
             model_id_list=model_id_list,
             force_genai=force_genai,
+            image_gen_platform=image_gen_platform,
+            openai_api_key=openai_api_key,
+            openai_api_base=openai_api_base,
+            openai_image_model=openai_image_model,
         )
         
         # If regenerating specific models, merge results into original file
@@ -456,7 +464,11 @@ def show_loading_and_generate_supplementary_3d(
     trellis2_decimation_target=1000000,
     vision_model="gemini/gemini-2.5-flash",
     model_id_list=None,
-    force_genai=False
+    force_genai=False,
+    image_gen_platform="Gemini",
+    openai_api_key=None,
+    openai_api_base=None,
+    openai_image_model="gpt-image-2",
 ):
     """Show loading indicator and generate supplementary 3D assets."""
     # Build initial loading state
@@ -496,7 +508,11 @@ def show_loading_and_generate_supplementary_3d(
         trellis2_decimation_target=trellis2_decimation_target,
         vision_model=vision_model,
         model_id_list=model_id_list,
-        force_genai=force_genai
+        force_genai=force_genai,
+        image_gen_platform=image_gen_platform,
+        openai_api_key=openai_api_key,
+        openai_api_base=openai_api_base,
+        openai_image_model=openai_image_model,
     )
     
     # Return final result
@@ -532,7 +548,9 @@ def create_generate_supplementary_wrapper(editor_component):
         gemini_api_key, gemini_api_base, gemini_image_model, project_dir, ai_platform, 
         meshy_model, tencent_secret_id, tencent_secret_key, trellis2_api_base,
         trellis2_max_concurrent, trellis2_texture_size, trellis2_resolution,
-        trellis2_decimation_target, vision_model
+        trellis2_decimation_target, vision_model,
+        force_genai=False, image_gen_platform="Gemini", openai_api_key=None,
+        openai_api_base=None, openai_image_model="gpt-image-2",
     ):
         """Wrapper to properly yield from the generator."""
         for result in show_loading_and_generate_supplementary_3d(
@@ -557,7 +575,11 @@ def create_generate_supplementary_wrapper(editor_component):
             trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model,
             model_id_list=None,  # Generate all
-            force_genai=False
+            force_genai=force_genai,
+            image_gen_platform=image_gen_platform,
+            openai_api_key=openai_api_key,
+            openai_api_base=openai_api_base,
+            openai_image_model=openai_image_model,
         ):
             yield result
     return generate_wrapper
@@ -609,6 +631,8 @@ def create_retry_failed_supplementary_wrapper(editor_component):
         meshy_model, tencent_secret_id, tencent_secret_key, trellis2_api_base,
         trellis2_max_concurrent, trellis2_texture_size, trellis2_resolution,
         trellis2_decimation_target, vision_model,
+        force_genai=False, image_gen_platform="Gemini", openai_api_key=None,
+        openai_api_base=None, openai_image_model="gpt-image-2",
     ):
         failed_ids = find_failed_supplementary_3d_ids(project_dir)
         if not failed_ids:
@@ -642,7 +666,11 @@ def create_retry_failed_supplementary_wrapper(editor_component):
             trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model,
             model_id_list=failed_ids,
-            force_genai=False,  # retry the full pipeline (polyhaven/sketchfab/genai)
+            force_genai=force_genai,
+            image_gen_platform=image_gen_platform,
+            openai_api_key=openai_api_key,
+            openai_api_base=openai_api_base,
+            openai_image_model=openai_image_model,
         ):
             yield result
     return retry_wrapper
@@ -656,7 +684,11 @@ def create_regenerate_supplementary_wrapper(editor_component):
         meshy_model, tencent_secret_id, tencent_secret_key, trellis2_api_base,
         trellis2_max_concurrent, trellis2_texture_size, trellis2_resolution,
         trellis2_decimation_target, vision_model,
-        model_id_list
+        model_id_list,
+        image_gen_platform="Gemini",
+        openai_api_key=None,
+        openai_api_base=None,
+        openai_image_model="gpt-image-2",
     ):
         """Wrapper to properly yield from the generator."""
         if not model_id_list:
@@ -689,7 +721,11 @@ def create_regenerate_supplementary_wrapper(editor_component):
             trellis2_decimation_target=trellis2_decimation_target,
             vision_model=vision_model,
             model_id_list=model_id_list,
-            force_genai=True  # Force genai for regeneration
+            force_genai=True,  # Force genai for regeneration
+            image_gen_platform=image_gen_platform,
+            openai_api_key=openai_api_key,
+            openai_api_base=openai_api_base,
+            openai_image_model=openai_image_model,
         ):
             yield result
     return regenerate_wrapper
@@ -1305,7 +1341,11 @@ def create_supplementary_assets_ui(
     trellis2_texture_size,
     trellis2_resolution,
     trellis2_decimation_target,
-    blender_client
+    blender_client,
+    image_gen_platform,
+    openai_api_key,
+    openai_api_base,
+    openai_image_model,
 ):
     """Create the Step 4: Design and Fetch Supplementary Assets by Set Dresser and Concept Artist UI section.
     
@@ -1382,6 +1422,12 @@ def create_supplementary_assets_ui(
             "♻️ Retry Failed 3D Models", variant="secondary", size="lg", scale=1,
         )
     
+    force_supplementary_genai = gr.Checkbox(
+        label="Generate all supplementary assets with AI",
+        value=False,
+        info="Skip asset libraries and use the configured image and 3D generation providers.",
+    )
+
     # Loading status indicator (hidden by default)
     generate_loading_status = gr.Markdown(value="", visible=False)
     
@@ -1422,6 +1468,11 @@ def create_supplementary_assets_ui(
         trellis2_resolution,
         trellis2_decimation_target,
         vision_model,
+        force_supplementary_genai,
+        image_gen_platform,
+        openai_api_key,
+        openai_api_base,
+        openai_image_model,
     ]
 
     # Generate button click handler
@@ -1567,7 +1618,11 @@ def create_supplementary_assets_ui(
             trellis2_resolution,
             trellis2_decimation_target,
             vision_model,
-            model_regen_selection
+            model_regen_selection,
+            image_gen_platform,
+            openai_api_key,
+            openai_api_base,
+            openai_image_model,
         ],
         outputs=generate_editor.get_output_components() + [generate_loading_status, generate_btn]
     )

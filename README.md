@@ -151,6 +151,11 @@ For OpenRouter, use `https://openrouter.ai/api/v1` for the AnyLLM and OpenAI
 image API bases, `openai` as the AnyLLM provider, and provider-qualified model
 IDs (for example `anthropic/claude-opus-5.5` and
 `openai/gpt-image-2.5-sunburst`). Select **OpenAI** for Image Generation Platform.
+Step 4 supplementary generation uses the same image provider and model selected
+in Configuration. Enable **Generate all supplementary assets with AI** to skip
+asset libraries and generate every supplementary model with that image provider
+and the selected 3D provider. Failed retries keep these settings.
+
 OpenRouter image generation and reference-image editing use its dedicated
 Images API; standard OpenAI-compatible services retain their generation/edit
 endpoints. Both base64 and URL image responses are supported.

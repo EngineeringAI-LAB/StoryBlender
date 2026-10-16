@@ -166,7 +166,11 @@ with gr.Blocks(elem_id="StoryBlenderAPP") as StoryBlenderAPP:
         trellis2_texture_size,
         trellis2_resolution,
         trellis2_decimation_target,
-        blender_client
+        blender_client,
+        image_gen_platform,
+        openai_api_key,
+        openai_api_base,
+        openai_image_model,
     )
     
     gr.Markdown("---")

@@ -3593,6 +3593,11 @@ def _fetch_single_model_generation_only(
     trellis2_decimation_target: int = 1000000,
     vision_model: str = "openai/gpt-5-mini",
     story_summary: str = "",
+    image_gen_platform: str = "Gemini",
+    openai_api_key: Optional[str] = None,
+    openai_api_base: Optional[str] = None,
+    openai_image_model: str = "gpt-image-2",
+    anyllm_provider: str = "openai",
 ) -> Dict[str, Any]:
     """
     Fetch a single model using only AI generation (Hunyuan3D, Meshy, or TRELLIS2).
@@ -3659,6 +3664,11 @@ def _fetch_single_model_generation_only(
             anyllm_api_base=anyllm_api_base,
             vision_model=vision_model,
             story_summary=story_summary,
+            image_gen_platform=image_gen_platform,
+            openai_api_key=openai_api_key,
+            openai_api_base=openai_api_base,
+            openai_image_model=openai_image_model,
+            anyllm_provider=anyllm_provider,
         )
     
         # Download the model based on platform
@@ -3742,6 +3752,10 @@ def _fetch_single_model(
     force_genai: bool = False,
     skip_genai: bool = False,
     story_summary: str = "",
+    image_gen_platform: str = "Gemini",
+    openai_api_key: Optional[str] = None,
+    openai_api_base: Optional[str] = None,
+    openai_image_model: str = "gpt-image-2",
 ) -> Dict[str, Any]:
     """
     Fetch a single model using Polyhaven, Sketchfab, or AI (Hunyuan3D/Meshy).
@@ -3906,6 +3920,11 @@ def _fetch_single_model(
                 anyllm_api_base=anyllm_api_base,
                 vision_model=vision_model,
                 story_summary=story_summary,
+                image_gen_platform=image_gen_platform,
+                openai_api_key=openai_api_key,
+                openai_api_base=openai_api_base,
+                openai_image_model=openai_image_model,
+                anyllm_provider=anyllm_provider,
             )
         
             # Download the model based on platform
@@ -3986,6 +4005,15 @@ def fetch_model(
     model_id_list: Optional[List[str]] = None,
     force_genai: bool = False,
     skip_genai: bool = False,
+    trellis2_api_base: Optional[str] = None,
+    trellis2_max_concurrent: int = 1,
+    trellis2_texture_size: int = 4096,
+    trellis2_resolution: str = "1024",
+    trellis2_decimation_target: int = 1000000,
+    image_gen_platform: str = "Gemini",
+    openai_api_key: Optional[str] = None,
+    openai_api_base: Optional[str] = None,
+    openai_image_model: str = "gpt-image-2",
 ) -> Dict[str, Any]:
     """
     Fetch multiple models using a two-phase approach: retrieval first, then generation.
@@ -4169,6 +4197,11 @@ def fetch_model(
                     trellis2_decimation_target,
                     vision_model,
                     story_summary,
+                    image_gen_platform=image_gen_platform,
+                    openai_api_key=openai_api_key,
+                    openai_api_base=openai_api_base,
+                    openai_image_model=openai_image_model,
+                    anyllm_provider=anyllm_provider,
                 ): model_id
                 for model_id, model_data in models_needing_generation.items()
             }
@@ -4244,6 +4277,11 @@ def fetch_model(
                     trellis2_decimation_target,
                     vision_model,
                     story_summary,
+                    image_gen_platform=image_gen_platform,
+                    openai_api_key=openai_api_key,
+                    openai_api_base=openai_api_base,
+                    openai_image_model=openai_image_model,
+                    anyllm_provider=anyllm_provider,
                 ): model_id
                 for model_id, model_data in failed_generation_models.items()
             }
