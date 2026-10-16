@@ -1994,6 +1994,10 @@ class BlenderMCPServer:
             dict: Result of the formatting process with success status and details
         """
         try:
+            screen = bpy.context.screen
+            if screen is None or not any(area.type == 'VIEW_3D' for area in screen.areas):
+                return {"error": "Open a 3D Viewport in Blender, then retry formatting assets. Orientation checks require viewport previews."}
+
             # Read the JSON file
             if not os.path.exists(path_to_script):
                 return {"error": f"Script file not found: {path_to_script}"}
