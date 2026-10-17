@@ -4,7 +4,10 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
+import tempfile
+from pathlib import Path
 import gradio as gr
 
 
@@ -27,6 +30,24 @@ def get_ffmpeg_path():
         for path in common_paths:
             if os.path.exists(path):
                 return path
+    # imageio-ffmpeg is already shipped with the extension on every platform.
+    try:
+        import imageio_ffmpeg
+        try:
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except RuntimeError:
+            # Blender's wheel extraction can discard Unix executable bits. Keep
+            # site-packages untouched and run a user-executable temporary copy.
+            binaries = list((Path(imageio_ffmpeg.__file__).parent / "binaries").glob("ffmpeg-*"))
+            if len(binaries) == 1 and binaries[0].is_file():
+                cache = Path(tempfile.gettempdir()) / "storyblender-ffmpeg"
+                cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+                executable = cache / binaries[0].name
+                shutil.copyfile(binaries[0], executable)
+                executable.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+                return str(executable)
+    except (ImportError, OSError):
+        pass
     return "ffmpeg"  # Fall back to hoping it's in PATH
 
 
@@ -115,6 +136,8 @@ def stitch_frames_to_video(renders_folder, output_folder, fps=24):
     
     if not scene_shot_folders:
         return {"error": f"⚠️ No scene folders found in: {renders_folder}"}
+
+    ffmpeg_path = get_ffmpeg_path()
     
     for scene_shot_folder in scene_shot_folders:
         scene_shot_path = os.path.join(renders_folder, scene_shot_folder)
@@ -167,7 +190,6 @@ def stitch_frames_to_video(renders_folder, output_folder, fps=24):
             output_path = os.path.join(output_folder, output_filename)
             
             # Build ffmpeg command
-            ffmpeg_path = get_ffmpeg_path()
             ffmpeg_cmd = [
                 ffmpeg_path,
                 "-y",  # Overwrite output file if exists
@@ -213,7 +235,6 @@ def stitch_frames_to_video(renders_folder, output_folder, fps=24):
                 f.write(f"file '{os.path.basename(video_path)}'\n")
         
         # Concatenate all videos
-        ffmpeg_path = get_ffmpeg_path()
         concat_cmd = [
             ffmpeg_path,
             "-y",
