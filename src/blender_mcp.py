@@ -980,7 +980,7 @@ class BlenderMCPServer:
     def download_polyhaven_asset(self, asset_id, asset_type, resolution="2k", file_format=None):
         try:
             # First get the files information
-            files_response = requests.get(f"https://api.polyhaven.com/files/{asset_id}", headers=REQ_HEADERS)
+            files_response = requests.get(f"https://api.polyhaven.com/files/{asset_id}", headers=REQ_HEADERS, timeout=(15, 120))
             if files_response.status_code != 200:
                 return {"error": f"Failed to get asset files: {files_response.status_code}"}
 
@@ -1000,7 +1000,7 @@ class BlenderMCPServer:
                     # since Blender can't properly load HDR data directly from memory
                     with tempfile.NamedTemporaryFile(suffix=f".{file_format}", delete=False) as tmp_file:
                         # Download the file
-                        response = requests.get(file_url, headers=REQ_HEADERS)
+                        response = requests.get(file_url, headers=REQ_HEADERS, timeout=(15, 120))
                         if response.status_code != 200:
                             return {"error": f"Failed to download HDRI: {response.status_code}"}
 
@@ -1111,7 +1111,7 @@ class BlenderMCPServer:
                                 # Use NamedTemporaryFile like we do for HDRIs
                                 with tempfile.NamedTemporaryFile(suffix=f".{file_format}", delete=False) as tmp_file:
                                     # Download the file
-                                    response = requests.get(file_url, headers=REQ_HEADERS)
+                                    response = requests.get(file_url, headers=REQ_HEADERS, timeout=(15, 120))
                                     if response.status_code == 200:
                                         tmp_file.write(response.content)
                                         tmp_path = tmp_file.name
@@ -1248,7 +1248,7 @@ class BlenderMCPServer:
                         main_file_name = file_url.split("/")[-1]
                         main_file_path = os.path.join(temp_dir, main_file_name)
 
-                        response = requests.get(file_url, headers=REQ_HEADERS)
+                        response = requests.get(file_url, headers=REQ_HEADERS, timeout=(15, 120))
                         if response.status_code != 200:
                             return {"error": f"Failed to download model: {response.status_code}"}
 
@@ -1266,7 +1266,7 @@ class BlenderMCPServer:
                                 os.makedirs(os.path.dirname(include_file_path), exist_ok=True)
 
                                 # Download the included file
-                                include_response = requests.get(include_url, headers=REQ_HEADERS)
+                                include_response = requests.get(include_url, headers=REQ_HEADERS, timeout=(15, 120))
                                 if include_response.status_code == 200:
                                     with open(include_file_path, "wb") as f:
                                         f.write(include_response.content)
@@ -1684,7 +1684,7 @@ class BlenderMCPServer:
             # Download individual texture files (diff, rough, nor_gl, disp)
             try:
                 # Get the files information
-                files_response = requests.get(f"https://api.polyhaven.com/files/{texture_asset_id}", headers=REQ_HEADERS)
+                files_response = requests.get(f"https://api.polyhaven.com/files/{texture_asset_id}", headers=REQ_HEADERS, timeout=(15, 120))
                 if files_response.status_code != 200:
                     return {"error": f"Failed to get asset files: {files_response.status_code}"}
                 
@@ -1742,7 +1742,7 @@ class BlenderMCPServer:
                         
                         # Download the file
                         print(f"Downloading {map_type} ({found_resolution}, {found_format}): {file_url}")
-                        response = requests.get(file_url, headers=REQ_HEADERS)
+                        response = requests.get(file_url, headers=REQ_HEADERS, timeout=(15, 120))
                         if response.status_code != 200:
                             print(f"Warning: Failed to download {map_type}: {response.status_code}")
                             continue
@@ -1867,7 +1867,7 @@ class BlenderMCPServer:
                             wall_side_length = wall_dimensions[0] / 1000.0
                             
                             # Download wall texture files
-                            wall_files_response = requests.get(f"https://api.polyhaven.com/files/{wall_asset_id_final}", headers=REQ_HEADERS)
+                            wall_files_response = requests.get(f"https://api.polyhaven.com/files/{wall_asset_id_final}", headers=REQ_HEADERS, timeout=(15, 120))
                             if wall_files_response.status_code == 200:
                                 wall_files_data = wall_files_response.json()
                                 wall_temp_dir = tempfile.mkdtemp()
@@ -1892,7 +1892,7 @@ class BlenderMCPServer:
                                                 file_url = wall_files_data[map_type][found_res][fmt]["url"]
                                                 break
                                         if file_url:
-                                            resp = requests.get(file_url, headers=REQ_HEADERS)
+                                            resp = requests.get(file_url, headers=REQ_HEADERS, timeout=(15, 120))
                                             if resp.status_code == 200:
                                                 fname = f"{wall_asset_id_final}_{config['output_name']}_{found_res}.{found_fmt}"
                                                 with open(os.path.join(wall_temp_dir, fname), 'wb') as f:
