@@ -8,6 +8,7 @@ import base64
 import mimetypes
 from typing import Any, Dict, List, Optional, Tuple
 from copy import deepcopy
+from .shot_asset_presence import active_character_actions, assets_present_in_shot
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import json
@@ -826,6 +827,8 @@ def generate_animation_selection(
     # Create a deep copy to avoid modifying the original
     result = deepcopy(storyboard_script)
     result_shot_details = result.get("shot_details", [])
+    for shot in result_shot_details:
+        shot['character_actions'] = active_character_actions(shot)
     
     # Build mapping from asset_id to description and asset_type from asset_sheet
     asset_descriptions: Dict[str, str] = {}
@@ -944,7 +947,8 @@ def generate_animation_selection(
         scene_id = shot.get("scene_id")
         
         # Get all asset_ids in this scene
-        all_scene_assets = scene_asset_ids.get(scene_id, [])
+        all_scene_assets = assets_present_in_shot(
+            shot, result_shot_details, scene_asset_ids.get(scene_id, []))
         
         # Get all character asset_ids in this scene (filter by asset_type == "character")
         characters_in_scene = [
@@ -1290,6 +1294,8 @@ def animate_rigged_model(
         input_data = json.load(f)
     
     shot_details = input_data.get("shot_details", [])
+    for shot in shot_details:
+        shot['character_actions'] = active_character_actions(shot)
     asset_sheet = input_data.get("asset_sheet", [])
     
     # Determine which character assets are referenced by any character_action

@@ -944,7 +944,8 @@ def import_animated_assets_to_shot(
     try:
         scene_id = shot_detail.get("scene_id")
         shot_id = shot_detail.get("shot_id")
-        character_actions = shot_detail.get("character_actions", [])
+        from .shot_asset_presence import active_character_actions
+        character_actions = active_character_actions(shot_detail)
         
         if not character_actions:
             return {
