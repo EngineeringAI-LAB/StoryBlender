@@ -1,5 +1,4 @@
 import os
-import io
 import time
 import base64
 import mimetypes
@@ -14,7 +13,6 @@ except ImportError:
 requests = requests_for("animation")
 from requests.exceptions import RequestException, ProxyError, ConnectionError
 from pygltflib import GLTF2
-from PIL import Image
 
 from .restore_texture import restore_textures
 
@@ -64,11 +62,12 @@ def _extract_textures(filepath: str, output_folder: str) -> List[str]:
 
     binary_blob = gltf.binary_blob()
     extracted_paths = []
+    extracted_images = {}
 
     if gltf.images:
         for i, image in enumerate(gltf.images):
             ext = ".png" if image.mimeType == "image/png" else ".jpg"
-            image_name = image.name if image.name else f"texture_{i}"
+            image_name = f"texture_{i}"
             file_path = os.path.join(output_folder, f"{image_name}{ext}")
 
             if image.bufferView is not None:
@@ -77,10 +76,30 @@ def _extract_textures(filepath: str, output_folder: str) -> List[str]:
                 end = start + bv.byteLength
                 image_data = binary_blob[start:end]
 
-                img = Image.open(io.BytesIO(image_data))
-                img.save(file_path)
+                with open(file_path, 'wb') as image_file:
+                    image_file.write(image_data)
                 print(f"Extracted texture: {file_path}")
                 extracted_paths.append(file_path)
+                extracted_images[i] = os.path.basename(file_path)
+
+    # Image names and ordering do not identify their material roles. Blender's
+    # GLB exporter can put a bare "normal" image first and call the color map
+    # "Image_0". Keep the actual material references for submission/restoration.
+    manifest = {}
+    for material in gltf.materials or []:
+        pbr = material.pbrMetallicRoughness
+        roles = {
+            "base_color": pbr.baseColorTexture if pbr else None,
+            "metallic_roughness": pbr.metallicRoughnessTexture if pbr else None,
+            "normal": material.normalTexture,
+        }
+        for role, info in roles.items():
+            if info is not None and info.index is not None:
+                source = gltf.textures[info.index].source
+                if source in extracted_images:
+                    manifest.setdefault(role, extracted_images[source])
+    with open(os.path.join(output_folder, "texture_manifest.json"), "w") as f:
+        json.dump(manifest, f)
 
     return extracted_paths
 
@@ -141,14 +160,14 @@ def rig_model(
     texture_folder = os.path.join(model_dir, f"{model_name}_texture")
     extracted_textures = _extract_textures(filepath, texture_folder)
 
-    # If no texture_image_url provided, use the base color texture (no suffix like _normal, _metallic, _roughness)
+    # Meshy expects the color texture, never a normal or roughness map.
     if texture_image_url is None and extracted_textures:
-        # Filter out normal, metallic, roughness textures
-        pbr_suffixes = ("_normal", "_metallic", "_roughness")
-        base_textures = [t for t in extracted_textures if not any(s in os.path.basename(t).lower() for s in pbr_suffixes)]
-        selected_texture = base_textures[0] if base_textures else extracted_textures[0]
-        texture_image_url = _read_file_as_uri(selected_texture)
-        print(f"Using extracted texture: {selected_texture}")
+        with open(os.path.join(texture_folder, "texture_manifest.json")) as f:
+            color_texture = json.load(f).get("base_color")
+        if color_texture:
+            selected_texture = os.path.join(texture_folder, color_texture)
+            texture_image_url = _read_file_as_uri(selected_texture)
+            print(f"Using extracted color texture: {selected_texture}")
 
     # Convert local GLB file to data URI
     model_url = _read_file_as_uri(filepath)

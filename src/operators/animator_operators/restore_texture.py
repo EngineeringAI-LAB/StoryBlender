@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from pygltflib import GLTF2, Image, Texture, TextureInfo, NormalMaterialTexture, Material
 import base64
+import json
 
 
 def load_image_as_data_uri(image_path: str) -> str:
@@ -82,8 +83,13 @@ def restore_textures(
     
     # Auto-detect texture files if not specified
     texture_files = os.listdir(texture_dir)
+    manifest_path = Path(texture_dir) / "texture_manifest.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    base_color_file = base_color_file or manifest.get("base_color")
+    normal_file = normal_file or manifest.get("normal")
+    metallic_roughness_file = metallic_roughness_file or manifest.get("metallic_roughness")
     
-    if base_color_file is None:
+    if base_color_file is None and not manifest_path.exists():
         # Find base color (typically doesn't have _normal or _metallic/_roughness suffix)
         for f in texture_files:
             if f.endswith((".png", ".jpg", ".jpeg")):
@@ -92,13 +98,13 @@ def restore_textures(
                     base_color_file = f
                     break
     
-    if normal_file is None:
+    if normal_file is None and not manifest_path.exists():
         for f in texture_files:
             if "normal" in f.lower() and f.endswith((".png", ".jpg", ".jpeg")):
                 normal_file = f
                 break
     
-    if metallic_roughness_file is None:
+    if metallic_roughness_file is None and not manifest_path.exists():
         for f in texture_files:
             lower = f.lower()
             if ("metallic" in lower or "roughness" in lower) and f.endswith((".png", ".jpg", ".jpeg")):
@@ -148,17 +154,18 @@ def restore_textures(
             
             pbr = material.pbrMetallicRoughness
             
-            # Set base color texture (only if not already set)
+            # Explicit source material roles replace any maps changed by rigging.
+            # Legacy folders without a manifest only fill missing texture slots.
             if "baseColor" in texture_indices:
-                if pbr.baseColorTexture is None:
+                if pbr.baseColorTexture is None or "base_color" in manifest:
                     pbr.baseColorTexture = TextureInfo(index=texture_indices["baseColor"])
                     print(f"  Set baseColorTexture to index {texture_indices['baseColor']}")
                 else:
                     print(f"  baseColorTexture already exists at index {pbr.baseColorTexture.index}, skipping")
             
-            # Set metallic roughness texture (only if not already set)
+            # Restore the source metallic/roughness map when its role is known.
             if "metallicRoughness" in texture_indices:
-                if pbr.metallicRoughnessTexture is None:
+                if pbr.metallicRoughnessTexture is None or "metallic_roughness" in manifest:
                     pbr.metallicRoughnessTexture = TextureInfo(index=texture_indices["metallicRoughness"])
                     # When using a texture, typically set factors to 1.0 so texture controls the values
                     pbr.metallicFactor = 1.0
@@ -167,9 +174,9 @@ def restore_textures(
                 else:
                     print(f"  metallicRoughnessTexture already exists at index {pbr.metallicRoughnessTexture.index}, skipping")
             
-            # Set normal texture (only if not already set)
+            # Restore the source normal map when its role is known.
             if "normal" in texture_indices:
-                if material.normalTexture is None:
+                if material.normalTexture is None or "normal" in manifest:
                     material.normalTexture = NormalMaterialTexture(index=texture_indices["normal"])
                     print(f"  Set normalTexture to index {texture_indices['normal']}")
                 else:
