@@ -154,7 +154,7 @@ def generate_python_render_script(
         return None, [], "No cameras found in camera_blocking data."
     
     # Generate the Python script
-    engine_code = "'CYCLES'" if render_engine == "Cycles" else "'BLENDER_EEVEE_NEXT'"
+    engine_code = "'CYCLES'" if render_engine == "Cycles" else "'BLENDER_EEVEE'"
     
     # Calculate total frames for ETA
     total_frames = sum(job['end_frame'] - job['start_frame'] + 1 for job in render_jobs)

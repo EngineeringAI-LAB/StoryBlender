@@ -756,7 +756,7 @@ class BlenderMCPServer:
                 # This allows using viewport capture (preserves view angle and outlines)
                 # without Cycles progressive rendering issues
                 if shading.lower() == 'rendered':
-                    scene.render.engine = 'BLENDER_EEVEE_NEXT'
+                    scene.render.engine = 'BLENDER_EEVEE'
                 
                 # Disable GC during OpenGL render to prevent race condition with Gradio's asyncio thread
                 gc.disable()
@@ -1459,7 +1459,7 @@ class BlenderMCPServer:
                     render_samples = samples if samples is not None else 64
                     
                     # Set render engine to EEVEE
-                    scene.render.engine = 'BLENDER_EEVEE_NEXT'
+                    scene.render.engine = 'BLENDER_EEVEE'
                     
                     # Set EEVEE samples
                     scene.eevee.taa_render_samples = render_samples
