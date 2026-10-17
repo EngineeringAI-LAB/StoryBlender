@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import shlex
 import gradio as gr
 from .path_utils import make_paths_absolute, make_paths_relative
 
@@ -92,7 +93,8 @@ def generate_python_render_script(
     # Build render jobs list
     render_jobs = []
     
-    for shot in camera_data:
+    shots = camera_data.get("shot_details", []) if isinstance(camera_data, dict) else camera_data
+    for shot in shots:
         scene_id = shot.get("scene_id")
         shot_id = shot.get("shot_id")
         
@@ -101,36 +103,18 @@ def generate_python_render_script(
         
         scene_name = f"Scene_{scene_id}_Shot_{shot_id}"
         
-        # Get camera from camera_instruction
-        camera_instruction = shot.get("camera_instruction", {})
-        if camera_instruction:
-            camera_name = camera_instruction.get("camera_name")
-            json_start = camera_instruction.get("start_frame", 1)
-            json_end = camera_instruction.get("end_frame", json_start)
-            
-            if camera_name:
-                render_start = json_start
-                if number_of_frames <= 1:
-                    render_end = json_start
-                elif camera_frame_cap:
-                    render_end = min(json_start + number_of_frames - 1, json_end)
-                else:
-                    render_end = json_start + number_of_frames - 1
-                output_path = os.path.join(output_base_path, scene_name, camera_name, "frame_####")
-                
-                render_jobs.append({
-                    "scene_name": scene_name,
-                    "camera_name": camera_name,
-                    "start_frame": render_start,
-                    "end_frame": render_end,
-                    "output_path": output_path
-                })
-        
-        # Get cameras from additional_camera_instructions
-        for additional_cam in shot.get("additional_camera_instructions", []):
-            camera_name = additional_cam.get("camera_name")
-            json_start = additional_cam.get("start_frame", 1)
-            json_end = additional_cam.get("end_frame", json_start)
+        cameras = [shot.get("camera_instruction") or {}]
+        cameras.extend(shot.get("additional_camera_instructions") or [])
+        for camera in cameras:
+            # Suggestions share this JSON with placed cameras. Legacy checkpoints
+            # may omit the success flag but still contain the saved transform.
+            if camera.get("placement_success") is False:
+                continue
+            if not (camera.get("placement_success") or camera.get("start_transform")):
+                continue
+            camera_name = camera.get("camera_name")
+            json_start = camera.get("start_frame", 1)
+            json_end = camera.get("end_frame", json_start)
             
             if camera_name:
                 render_start = json_start
@@ -151,7 +135,7 @@ def generate_python_render_script(
                 })
     
     if not render_jobs:
-        return None, [], "No cameras found in camera_blocking data."
+        return None, [], "No placed cameras found. Complete camera blocking before rendering."
     
     # Generate the Python script
     engine_code = "'CYCLES'" if render_engine == "Cycles" else "'BLENDER_EEVEE'"
@@ -202,6 +186,7 @@ def generate_python_render_script(
         "def setup_render_settings(scene):",
         "    \"\"\"Configure render settings for the scene.\"\"\"",
         "    scene.render.engine = RENDER_ENGINE",
+        "    scene.render.image_settings.file_format = 'PNG'",
         "    ",
         "    if RENDER_SAMPLES is not None:",
         "        if RENDER_ENGINE == 'CYCLES':",
@@ -209,12 +194,21 @@ def generate_python_render_script(
         "        else:",
         "            scene.eevee.taa_render_samples = RENDER_SAMPLES",
         "    ",
-        "    if PERSISTENT_DATA and RENDER_ENGINE == 'CYCLES':",
-        "        scene.render.use_persistent_data = True",
+        "    scene.render.use_persistent_data = PERSISTENT_DATA and RENDER_ENGINE == 'CYCLES'",
         "",
         "def render_all():",
         "    \"\"\"Render all jobs in sequence.\"\"\"",
         "    total_jobs = len(RENDER_JOBS)",
+        "    # Validate every job before spending time on any render.",
+        "    for scene_name, camera_name, start, end, _ in RENDER_JOBS:",
+        "        scene = bpy.data.scenes.get(scene_name)",
+        "        if scene is None:",
+        "            raise RuntimeError(f\"Scene '{scene_name}' not found\")",
+        "        camera = scene.objects.get(camera_name)",
+        "        if camera is None or camera.type != 'CAMERA':",
+        "            raise RuntimeError(f\"Camera '{camera_name}' not found in '{scene_name}'\")",
+        "        if end < start:",
+        "            raise RuntimeError(f\"Invalid frame range for '{camera_name}': {start}–{end}\")",
         "    ",
         "    # Calculate total frames for ETA",
         "    total_frames = sum(end - start + 1 for _, _, start, end, _ in RENDER_JOBS)",
@@ -236,19 +230,11 @@ def generate_python_render_script(
         "        print(f\"{'='*60}\\n\")",
         "        ",
         "        # Switch to the scene",
-        "        if scene_name not in bpy.data.scenes:",
-        "            print(f\"ERROR: Scene '{scene_name}' not found, skipping...\")",
-        "            continue",
-        "        ",
         "        scene = bpy.data.scenes[scene_name]",
         "        bpy.context.window.scene = scene",
         "        ",
         "        # Set the camera",
-        "        if camera_name not in bpy.data.objects:",
-        "            print(f\"ERROR: Camera '{camera_name}' not found, skipping...\")",
-        "            continue",
-        "        ",
-        "        scene.camera = bpy.data.objects[camera_name]",
+        "        scene.camera = scene.objects[camera_name]",
         "        ",
         "        # Setup render settings",
         "        setup_render_settings(scene)",
@@ -289,7 +275,7 @@ def generate_python_render_script(
         "    print(f\"{'='*60}\")",
         "",
         "# Run the render",
-        "if __name__ == '__main__' or True:  # Always run when loaded by Blender",
+        "if __name__ == '__main__':",
         "    render_all()",
     ])
     
@@ -417,7 +403,8 @@ REM Output directory: {output_base_path}
 echo Starting batch render ({job_count} cameras)...
 echo.
 
-"{blender_executable}" -b "{blend_file_path_os}" --python "{python_script_path_os}"
+"{blender_executable}" -b "{blend_file_path_os}" --python-exit-code 1 --python "{python_script_path_os}"
+if errorlevel 1 exit /b %errorlevel%
 
 echo.
 echo Batch render complete.
@@ -425,6 +412,7 @@ pause
 """
     else:
         shell_script = f"""#!/bin/bash
+set -e
 # Single-session batch render script
 # Renders {job_count} camera(s) in one Blender session
 # Output directory: {output_base_path}
@@ -432,7 +420,7 @@ pause
 echo "Starting batch render ({job_count} cameras)..."
 echo
 
-{blender_executable} -b "{blend_file_path}" --python "{python_script_path}"
+{shlex.quote(blender_executable)} -b {shlex.quote(blend_file_path)} --python-exit-code 1 --python {shlex.quote(python_script_path)}
 
 echo
 echo "Batch render complete."
@@ -479,7 +467,7 @@ def create_rendering_ui(project_dir):
             value=1,
             precision=0,
             minimum=1,
-            info="1 = render only start frame, >1 = render start_frame to start_frame + N - 1 (capped at end_frame from JSON)"
+            info="Frames per camera, starting at its first frame. Enable Camera Frame Cap to stop at its saved end frame."
         )
     
     with gr.Row():
