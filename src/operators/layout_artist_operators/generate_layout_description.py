@@ -658,7 +658,7 @@ class SceneLayoutVerifier:
             a["asset_id"]: a for a in self.assets_data
         }
         self._meshes: Dict[str, trimesh.Trimesh] = {}
-        self._manager = trimesh.collision.CollisionManager()
+        self._footprints: Dict[str, np.ndarray] = {}
         self._build_meshes()
 
     def _build_meshes(self):
@@ -689,7 +689,42 @@ class SceneLayoutVerifier:
             T[2, 3] = loc["z"] + h / 2.0
             box.apply_transform(T)
             self._meshes[aid] = box
-            self._manager.add_object(aid, box)
+            footprint = np.array([[-w / 2, -d / 2], [w / 2, -d / 2],
+                                  [w / 2, d / 2], [-w / 2, d / 2]])
+            self._footprints[aid] = footprint @ T[:2, :2].T + T[:2, 3]
+
+    def _box_gap(self, a: str, b: str) -> float:
+        """Exact separation of the Z-aligned oriented boxes used by this verifier.
+
+        FCL's convex distance solver can abort the process on thin or overlapping
+        boxes. A rectangle separating-axis check and point-to-edge distances avoid
+        that native solver while preserving the verifier's distance tolerances.
+        """
+        poly_a, poly_b = self._footprints[a], self._footprints[b]
+        z_a, z_b = self._get_bbox_z(a), self._get_bbox_z(b)
+        z_gap = max(z_a[0] - z_b[1], z_b[0] - z_a[1], 0.0)
+        separated = False
+        for polygon in (poly_a, poly_b):
+            for edge in (polygon[1] - polygon[0], polygon[2] - polygon[1]):
+                axis = np.array([-edge[1], edge[0]]) / np.linalg.norm(edge)
+                projection_a, projection_b = poly_a @ axis, poly_b @ axis
+                if max(projection_a.min() - projection_b.max(),
+                       projection_b.min() - projection_a.max()) > 1e-10:
+                    separated = True
+                    break
+            if separated:
+                break
+        if not separated:
+            return float(z_gap)
+
+        xy_gap = float('inf')
+        for points, polygon in ((poly_a, poly_b), (poly_b, poly_a)):
+            for start, end in zip(polygon, np.roll(polygon, -1, axis=0)):
+                edge = end - start
+                fractions = np.clip((points - start) @ edge / (edge @ edge), 0.0, 1.0)
+                nearest = start + fractions[:, None] * edge
+                xy_gap = min(xy_gap, float(np.linalg.norm(points - nearest, axis=1).min()))
+        return math.hypot(xy_gap, z_gap)
 
     @staticmethod
     def _angle_between_vectors_2d(v1: np.ndarray, v2: np.ndarray) -> float:
@@ -745,10 +780,7 @@ class SceneLayoutVerifier:
                 # into an anchor they are touching on purpose.
                 if self._is_declared_contact_pair(a, b):
                     continue
-                mgr = trimesh.collision.CollisionManager()
-                mgr.add_object("a", self._meshes[a])
-                mgr.add_object("b", self._meshes[b])
-                if mgr.in_collision_internal():
+                if self._box_gap(a, b) <= 1e-10:
                     try:
                         # Never auto-select Blender here: a background Blender can
                         # reconcile and remove the live add-on's shared wheels.
@@ -924,12 +956,8 @@ class SceneLayoutVerifier:
             return None
         if aid not in self._meshes or anchor_id not in self._meshes:
             return None
-        mgr = trimesh.collision.CollisionManager()
-        mgr.add_object("a", self._meshes[aid])
-        mgr.add_object("b", self._meshes[anchor_id])
-        min_dist = mgr.min_distance_internal()
-        is_colliding = mgr.in_collision_internal()
-        geom_contact = (min_dist <= self.CONTACT_TOL) or is_colliding
+        min_dist = self._box_gap(aid, anchor_id)
+        geom_contact = min_dist <= self.CONTACT_TOL + 1e-10
         if contact and not geom_contact:
             relationship = asset.get("relationship")
             anchor_loc = self._asset_lookup[anchor_id]["location"]
