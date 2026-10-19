@@ -12,6 +12,12 @@
 
 ---
 ## 📰 News
+
+[10/19/2026] 🚀 **Major update: Blender 5.2 LTS beta support is here!**
+Try the [`blender-5.2-lts` branch](https://github.com/EngineeringAI-LAB/StoryBlender/tree/blender-5.2-lts),
+with end-to-end OpenRouter/Meshy pipeline testing, animation, and headless rendering.
+**Tested on macOS (Apple Silicon) only**; Windows and Linux runtime testing is pending.
+
 [6/18/2026] StortBlender is accepted to ECCV 2026, see you in 🇸🇪!
 
 ## ✨ Overview
@@ -63,7 +69,12 @@ zip -r storyblender.zip StoryBlender
 
 ### 2) Install in Blender
 
-In Blender (please use Blender 4.5 LTS, 5.0+ has compatible issues), go to:
+The `main` branch uses **Blender 4.5 LTS**. For **Blender 5.2 LTS beta support**,
+switch to the [`blender-5.2-lts` branch](https://github.com/EngineeringAI-LAB/StoryBlender/tree/blender-5.2-lts)
+and follow its installation instructions. That version has been tested on
+**macOS (Apple Silicon) only**.
+
+To install the Blender 4.5 LTS version from `main`, go to:
 
 `Edit` → `Preferences` → `Get Extensions` → *(top-right dropdown menu)* → `Install from Disk`
 
