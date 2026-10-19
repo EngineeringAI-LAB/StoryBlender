@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import shlex
+from pathlib import Path
 import gradio as gr
 from .path_utils import make_paths_absolute, make_paths_relative
 
@@ -69,7 +70,7 @@ def generate_python_render_script(
     camera_frame_cap=False
 ):
     """
-    Generate a Python script that renders all cameras in a single Blender session.
+    Generate a worker script that renders one selected camera per process.
     
     Args:
         number_of_frames: Number of frames to render per camera
@@ -137,149 +138,18 @@ def generate_python_render_script(
     if not render_jobs:
         return None, [], "No placed cameras found. Complete camera blocking before rendering."
     
-    # Generate the Python script
-    engine_code = "'CYCLES'" if render_engine == "Cycles" else "'BLENDER_EEVEE'"
-    
-    # Calculate total frames for ETA
-    total_frames = sum(job['end_frame'] - job['start_frame'] + 1 for job in render_jobs)
-    
-    script_lines = [
-        "import bpy",
-        "import os",
-        "import time",
-        "",
-        f"# Auto-generated render script from: {result_info}",
-        f"# Total render jobs: {len(render_jobs)}",
-        f"# Total frames to render: {total_frames}",
-        "",
-        "# Render configuration",
-        f"RENDER_ENGINE = {engine_code}",
-        f"RENDER_SAMPLES = {render_samples if render_samples else 'None'}",
-        f"PERSISTENT_DATA = {persistent_data}",
-        "",
-        "# Render jobs: (scene_name, camera_name, start_frame, end_frame, output_path)",
-        "RENDER_JOBS = [",
-    ]
-    
-    for job in render_jobs:
-        output_path_for_py = job["output_path"].replace("\\", "/")
-        script_lines.append(
-            f"    ({json.dumps(job['scene_name'])}, {json.dumps(job['camera_name'])}, {job['start_frame']}, {job['end_frame']}, {json.dumps(output_path_for_py)}),"
-        )
-    
-    script_lines.extend([
-        "]",
-        "",
-        "def format_time(seconds):",
-        "    \"\"\"Format seconds into human-readable time string.\"\"\"",
-        "    if seconds < 60:",
-        "        return f\"{seconds:.1f}s\"",
-        "    elif seconds < 3600:",
-        "        mins = int(seconds // 60)",
-        "        secs = int(seconds % 60)",
-        "        return f\"{mins}m {secs}s\"",
-        "    else:",
-        "        hours = int(seconds // 3600)",
-        "        mins = int((seconds % 3600) // 60)",
-        "        return f\"{hours}h {mins}m\"",
-        "",
-        "def setup_render_settings(scene):",
-        "    \"\"\"Configure render settings for the scene.\"\"\"",
-        "    scene.render.engine = RENDER_ENGINE",
-        "    scene.render.image_settings.file_format = 'PNG'",
-        "    ",
-        "    if RENDER_SAMPLES is not None:",
-        "        if RENDER_ENGINE == 'CYCLES':",
-        "            scene.cycles.samples = RENDER_SAMPLES",
-        "        else:",
-        "            scene.eevee.taa_render_samples = RENDER_SAMPLES",
-        "    ",
-        "    scene.render.use_persistent_data = PERSISTENT_DATA and RENDER_ENGINE == 'CYCLES'",
-        "",
-        "def render_all():",
-        "    \"\"\"Render all jobs in sequence.\"\"\"",
-        "    total_jobs = len(RENDER_JOBS)",
-        "    # Validate every job before spending time on any render.",
-        "    for scene_name, camera_name, start, end, _ in RENDER_JOBS:",
-        "        scene = bpy.data.scenes.get(scene_name)",
-        "        if scene is None:",
-        "            raise RuntimeError(f\"Scene '{scene_name}' not found\")",
-        "        camera = scene.objects.get(camera_name)",
-        "        if camera is None or camera.type != 'CAMERA':",
-        "            raise RuntimeError(f\"Camera '{camera_name}' not found in '{scene_name}'\")",
-        "        if end < start:",
-        "            raise RuntimeError(f\"Invalid frame range for '{camera_name}': {start}–{end}\")",
-        "    ",
-        "    # Calculate total frames for ETA",
-        "    total_frames = sum(end - start + 1 for _, _, start, end, _ in RENDER_JOBS)",
-        "    frames_rendered = 0",
-        "    total_render_time = 0",
-        "    render_start_time = time.time()",
-        "    ",
-        "    for idx, (scene_name, camera_name, start_frame, end_frame, output_path) in enumerate(RENDER_JOBS, 1):",
-        "        job_frames = end_frame - start_frame + 1",
-        "        print(f\"\\n{'='*60}\")",
-        "        print(f\"Rendering job {idx}/{total_jobs}: {scene_name} - {camera_name}\")",
-        "        print(f\"Frames: {start_frame} to {end_frame} ({job_frames} frames)\")",
-        "        print(f\"Output: {output_path}\")",
-        "        if frames_rendered > 0:",
-        "            avg_time_per_frame = total_render_time / frames_rendered",
-        "            remaining_frames = total_frames - frames_rendered",
-        "            eta_seconds = avg_time_per_frame * remaining_frames",
-        "            print(f\"Avg: {avg_time_per_frame:.2f}s/frame | Remaining: {remaining_frames} frames | ETA: {format_time(eta_seconds)}\")",
-        "        print(f\"{'='*60}\\n\")",
-        "        ",
-        "        # Switch to the scene",
-        "        scene = bpy.data.scenes[scene_name]",
-        "        bpy.context.window.scene = scene",
-        "        ",
-        "        # Set the camera",
-        "        scene.camera = scene.objects[camera_name]",
-        "        ",
-        "        # Setup render settings",
-        "        setup_render_settings(scene)",
-        "        ",
-        "        # Set output path and frame range",
-        "        scene.render.filepath = output_path",
-        "        scene.frame_start = start_frame",
-        "        scene.frame_end = end_frame",
-        "        ",
-        "        # Create output directory",
-        "        output_dir = os.path.dirname(output_path)",
-        "        os.makedirs(output_dir, exist_ok=True)",
-        "        ",
-        "        # Render with timing",
-        "        job_start_time = time.time()",
-        "        bpy.ops.render.render(animation=True)",
-        "        job_elapsed = time.time() - job_start_time",
-        "        ",
-        "        # Update stats",
-        "        frames_rendered += job_frames",
-        "        total_render_time += job_elapsed",
-        "        avg_time_per_frame = total_render_time / frames_rendered",
-        "        ",
-        "        print(f\"\\nCompleted: {scene_name} - {camera_name}\")",
-        "        print(f\"Job time: {format_time(job_elapsed)} ({job_elapsed/job_frames:.2f}s/frame)\")",
-        "        print(f\"Progress: {frames_rendered}/{total_frames} frames ({100*frames_rendered/total_frames:.1f}%)\")",
-        "        ",
-        "        remaining_frames = total_frames - frames_rendered",
-        "        if remaining_frames > 0:",
-        "            eta_seconds = avg_time_per_frame * remaining_frames",
-        "            print(f\"ETA for remaining {remaining_frames} frames: {format_time(eta_seconds)}\")",
-        "    ",
-        "    total_elapsed = time.time() - render_start_time",
-        "    print(f\"\\n{'='*60}\")",
-        "    print(f\"All {total_jobs} render jobs completed!\")",
-        "    print(f\"Total time: {format_time(total_elapsed)}\")",
-        "    print(f\"Average: {total_elapsed/total_frames:.2f}s/frame\")",
-        "    print(f\"{'='*60}\")",
-        "",
-        "# Run the render",
-        "if __name__ == '__main__':",
-        "    render_all()",
-    ])
-    
-    python_script = "\n".join(script_lines)
+    # Export standalone sources: workers need no installed StoryBlender package.
+    source_dir = Path(__file__).resolve().parent
+    guard = (source_dir.parent / "memory_budget.py").read_text()
+    worker = (source_dir / "render_worker.py").read_text()
+    job_tuples = [(job["scene_name"], job["camera_name"], job["start_frame"],
+                   job["end_frame"], job["output_path"].replace("\\", "/")) for job in render_jobs]
+    config = (f"\n# Generated from {result_info}\n"
+              f"RENDER_ENGINE = {'CYCLES' if render_engine == 'Cycles' else 'BLENDER_EEVEE'!r}\n"
+              f"RENDER_SAMPLES = {render_samples or None!r}\n"
+              f"PERSISTENT_DATA = {bool(persistent_data)!r}\n"
+              f"RENDER_JOBS = {job_tuples!r}\n")
+    python_script = guard + config + "\n" + worker
     return python_script, render_jobs, None
 
 
@@ -296,7 +166,7 @@ def generate_all_render_files(
     camera_frame_cap=False
 ):
     """
-    Generate render files: a Python script for Blender and a shell script to run it.
+    Generate a worker script and sequential, memory-supervised batch launcher.
     
     Args:
         number_of_frames: Number of frames to render per camera
@@ -379,7 +249,8 @@ def generate_and_save_script(
         shell_ext = ".bat" if target_os == "Windows" else ".sh"
         shell_script_path = os.path.join(renders_dir, f"render_v{version}{shell_ext}")
         python_script_path = os.path.join(renders_dir, f"render_script_v{version}.py")
-        if not os.path.exists(shell_script_path) and not os.path.exists(python_script_path):
+        runner_path = os.path.join(renders_dir, f"render_runner_v{version}.py")
+        if not os.path.exists(shell_script_path) and not os.path.exists(python_script_path) and not os.path.exists(runner_path):
             break
         version += 1
     
@@ -387,6 +258,12 @@ def generate_and_save_script(
     with open(python_script_path, "w", newline='\n') as f:
         f.write(python_script)
     
+    source_dir = Path(__file__).resolve().parent
+    runner = ((source_dir.parent / "memory_budget.py").read_text() + "\n"
+              + (source_dir / "render_batch_runner.py").read_text()
+              + "\nif __name__ == '__main__':\n    main(ensure_memory_budget)\n")
+    Path(runner_path).write_text(runner)
+
     # Default output path for display
     if not output_base_path or output_base_path.strip() == "":
         output_base_path = os.path.join(project_dir, "renders")
@@ -396,14 +273,14 @@ def generate_and_save_script(
         blend_file_path_os = blend_file_path.replace('/', '\\\\')
         python_script_path_os = python_script_path.replace('/', '\\\\')
         shell_script = f"""@echo off
-REM Single-session batch render script
-REM Renders {job_count} camera(s) in one Blender session
+REM Supervised batch: one camera per fresh Blender worker
+REM Renders {job_count} camera(s) sequentially
 REM Output directory: {output_base_path}
 
 echo Starting batch render ({job_count} cameras)...
 echo.
 
-"{blender_executable}" -b "{blend_file_path_os}" --python-exit-code 1 --python "{python_script_path_os}"
+"{blender_executable}" -b --factory-startup --python-exit-code 1 --python "{runner_path}" -- --blender "{blender_executable}" --blend "{blend_file_path_os}" --worker "{python_script_path_os}"
 if errorlevel 1 exit /b %errorlevel%
 
 echo.
@@ -413,14 +290,14 @@ pause
     else:
         shell_script = f"""#!/bin/bash
 set -e
-# Single-session batch render script
-# Renders {job_count} camera(s) in one Blender session
+# Supervised batch: one camera per fresh Blender worker
+# Renders {job_count} camera(s) sequentially
 # Output directory: {output_base_path}
 
 echo "Starting batch render ({job_count} cameras)..."
 echo
 
-{shlex.quote(blender_executable)} -b {shlex.quote(blend_file_path)} --python-exit-code 1 --python {shlex.quote(python_script_path)}
+{shlex.quote(blender_executable)} -b --factory-startup --python-exit-code 1 --python {shlex.quote(runner_path)} -- --blender {shlex.quote(blender_executable)} --blend {shlex.quote(blend_file_path)} --worker {shlex.quote(python_script_path)}
 
 echo
 echo "Batch render complete."
@@ -451,7 +328,7 @@ def create_rendering_ui(project_dir):
         dict with UI components that may be needed by other parts of the app
     """
     gr.Markdown("## Step 12: Rendering")
-    gr.Markdown("Generate Blender render commands for all cameras in your camera blocking.")
+    gr.Markdown("Generate headless render commands. Close Blender’s UI before running them; each camera uses a fresh supervised worker.")
     
     # Input fields
     with gr.Row():

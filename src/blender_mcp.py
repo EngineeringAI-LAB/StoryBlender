@@ -18,6 +18,7 @@ import gc
 from contextlib import redirect_stdout, suppress
 from pathlib import Path
 from .blender_compat import action_fcurves
+from .operators.layout_artist_operators.camera_state import camera_transforms
 from .proxy_config import configure_proxy
 
 
@@ -2871,12 +2872,11 @@ class BlenderMCPServer:
             dict: Camera info including transforms, parameters, and animation data
         """
         try:
-            # Switch to the scene
+            # Look up data without activating the scene's viewport/dependency graph.
             if scene_name not in bpy.data.scenes:
                 return {"success": False, "error": f"Scene '{scene_name}' not found"}
             
             scene = bpy.data.scenes[scene_name]
-            bpy.context.window.scene = scene
             
             # Find the camera
             camera_obj = None
@@ -2910,70 +2910,16 @@ class BlenderMCPServer:
                 else:
                     focus_distance = camera_data.dof.focus_distance
             
-            # Get current transform
-            location = list(camera_obj.location)
-            rotation = list(camera_obj.rotation_euler)
-            
-            # Check for animation and get keyframe transforms
-            is_animated = False
-            start_transform = None
-            end_transform = None
-            start_frame = scene.frame_start
-            end_frame = scene.frame_end
-            
-            if camera_obj.animation_data and camera_obj.animation_data.action:
-                action = camera_obj.animation_data.action
-                fcurves = action_fcurves(action, camera_obj.animation_data.action_slot)
-                
-                if fcurves:
-                    is_animated = True
-                    
-                    # Find keyframe times
-                    keyframe_times = set()
-                    for fcurve in fcurves:
-                        for keyframe in fcurve.keyframe_points:
-                            keyframe_times.add(int(keyframe.co[0]))
-                    
-                    if keyframe_times:
-                        keyframe_times = sorted(keyframe_times)
-                        start_frame = keyframe_times[0]
-                        end_frame = keyframe_times[-1] if len(keyframe_times) > 1 else keyframe_times[0]
-                        
-                        # Get transform at start frame
-                        scene.frame_set(start_frame)
-                        start_transform = {
-                            "location": list(camera_obj.location),
-                            "rotation": list(camera_obj.rotation_euler),
-                        }
-                        
-                        # Get transform at end frame
-                        scene.frame_set(end_frame)
-                        end_transform = {
-                            "location": list(camera_obj.location),
-                            "rotation": list(camera_obj.rotation_euler),
-                        }
-                        
-                        # Reset to start frame
-                        scene.frame_set(start_frame)
-            
-            # If not animated, use current transform for both
-            if not is_animated:
-                start_transform = {
-                    "location": location,
-                    "rotation": rotation,
-                }
-                end_transform = start_transform
-            
+            # Metadata reads must not activate material previews or evaluate
+            # every animated mesh in each shot just to read camera keyframes.
+            transforms = camera_transforms(scene, camera_obj)
+
             return {
                 "success": True,
                 "camera_name": camera_name,
                 "scene_name": scene_name,
                 "camera_parameters": camera_parameters,
-                "start_transform": start_transform,
-                "end_transform": end_transform,
-                "start_frame": start_frame,
-                "end_frame": end_frame,
-                "is_animated": is_animated,
+                **transforms,
                 "dof_applied": dof_applied,
                 "focus_distance": focus_distance,
             }

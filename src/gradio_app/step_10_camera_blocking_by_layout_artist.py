@@ -129,6 +129,11 @@ def get_latest_camera_blocking_json_path(project_dir):
             except ValueError:
                 continue
     
+    checkpoint = os.path.join(camera_blocking_dir, "camera_blocking_in_progress.json")
+    if os.path.isfile(checkpoint) and (
+        latest_path is None or os.path.getmtime(checkpoint) > os.path.getmtime(latest_path)
+    ):
+        return checkpoint
     return latest_path
 
 
@@ -672,7 +677,10 @@ def finish_camera_blocking(
         camera_instruction = shot.get("camera_instruction", {})
         if camera_instruction:
             camera_name = camera_instruction.get("camera_name")
-            if camera_name:
+            is_placed = camera_instruction.get("placement_success") is not False and (
+                camera_instruction.get("placement_success") or camera_instruction.get("start_transform")
+            )
+            if camera_name and is_placed:
                 response = blender_client.get_camera_info(
                     scene_name=scene_name,
                     camera_name=camera_name
@@ -701,7 +709,10 @@ def finish_camera_blocking(
         additional_cameras = shot.get("additional_camera_instructions", [])
         for cam_instruction in additional_cameras:
             camera_name = cam_instruction.get("camera_name")
-            if camera_name:
+            is_placed = cam_instruction.get("placement_success") is not False and (
+                cam_instruction.get("placement_success") or cam_instruction.get("start_transform")
+            )
+            if camera_name and is_placed:
                 response = blender_client.get_camera_info(
                     scene_name=scene_name,
                     camera_name=camera_name

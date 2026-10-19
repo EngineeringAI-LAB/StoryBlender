@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.gradio_app.step_12_rendering import generate_python_render_script, generate_and_save_script
+from src.memory_budget import MemoryBudgetExceeded
 
 
 class RenderExportTests(unittest.TestCase):
@@ -62,8 +63,37 @@ class RenderExportTests(unittest.TestCase):
             self.assertEqual(result.returncode, 7)
             self.assertNotIn("Batch render complete.", result.stdout)
             self.assertEqual(Path(str(executable) + ".args").read_text().splitlines(), [
-                "-b", blend, "--python-exit-code", "1", "--python", str(Path(directory) / "renders/render_script_v1.py")
+                "-b", "--factory-startup", "--python-exit-code", "1", "--python",
+                str(Path(directory) / "renders/render_runner_v1.py"), "--", "--blender", str(executable),
+                "--blend", blend, "--worker", str(Path(directory) / "renders/render_script_v1.py")
             ])
+
+    def test_worker_discards_unused_scenes_and_stops_before_render_when_over_budget(self):
+        class Scenes(dict):
+            def __iter__(self):
+                return iter(self.values())
+            def remove(self, scene):
+                del self[scene.name]
+        with tempfile.TemporaryDirectory() as directory:
+            self.checkpoint(directory)
+            script, _, _ = generate_python_render_script(directory, 'project.blend', 1, '', render_engine='EEVEE')
+            scene = SimpleNamespace(name='Scene_1_Shot_1', objects={
+                name: SimpleNamespace(type='CAMERA') for name in ('cam_1_s_1_s_1', 'legacy')
+            }, render=SimpleNamespace(image_settings=SimpleNamespace()), eevee=SimpleNamespace())
+            scenes = Scenes({scene.name: scene, 'unused': SimpleNamespace(name='unused')})
+            fake_bpy = SimpleNamespace(data=SimpleNamespace(scenes=scenes, orphans_purge=Mock()),
+                                       context=SimpleNamespace(window=SimpleNamespace()),
+                                       ops=SimpleNamespace(render=SimpleNamespace(render=Mock())))
+            namespace = {'__name__': 'worker_test'}
+            with patch.dict(sys.modules, {'bpy': fake_bpy}):
+                exec(compile(script, 'render_worker.py', 'exec'), namespace)
+            namespace['ensure_memory_budget'] = Mock(side_effect=[None, MemoryBudgetExceeded('stop before rendering')])
+            with patch.object(sys, 'argv', ['blender', '--', '--job-index', '1']):
+                with self.assertRaisesRegex(MemoryBudgetExceeded, 'stop before rendering'):
+                    namespace['render_all']()
+            self.assertEqual(list(scenes.keys()), [scene.name])
+            fake_bpy.data.orphans_purge.assert_called_once_with(do_recursive=True)
+            fake_bpy.ops.render.render.assert_not_called()
 
 
 if __name__ == "__main__":

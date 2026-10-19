@@ -4,6 +4,7 @@ import shutil
 from typing import Optional, List, Literal
 
 from .camera_helpers import create_and_place_camera_for_shot, resume_camera
+from ...memory_budget import ensure_memory_budget, MemoryBudgetExceeded
 
 
 CameraType = Literal['director', 'additional', 'all']
@@ -75,6 +76,16 @@ def camera_operator(
         cameras_placed = []
         cameras_failed = []
         last_successful_camera = None
+
+        def checkpoint():
+            if not preview_image_save_dir:
+                return None
+            os.makedirs(preview_image_save_dir, exist_ok=True)
+            path = os.path.join(preview_image_save_dir, 'camera_blocking_in_progress.json')
+            with open(path + '.tmp', 'w') as stream:
+                json.dump(shot_details, stream, indent=2)
+            os.replace(path + '.tmp', path)
+            return path
         
         # First pass: count total cameras to be placed (considering filter)
         total_cameras_to_place = 0
@@ -151,6 +162,7 @@ def camera_operator(
                     continue
                 
                 try:
+                    ensure_memory_budget("Camera blocking")
                     # Place the camera
                     result = create_and_place_camera_for_shot(
                         camera_instruction=camera_instruction,
@@ -207,6 +219,7 @@ def camera_operator(
                         
                         # Update the instruction in place
                         camera_instruction.update(placement_info)
+                        checkpoint()
                     else:
                         cameras_failed.append({
                             'camera_name': camera_name,
@@ -215,6 +228,15 @@ def camera_operator(
                         camera_instruction['placement_success'] = False
                         camera_instruction['placement_error'] = result.get('error', 'Unknown error')
                         print(f"[{len(cameras_placed)}/{total_cameras_to_place}] FAILED: {camera_name} - {result.get('error', 'Unknown error')}")
+
+                    ensure_memory_budget("Camera blocking")
+                except MemoryBudgetExceeded as exc:
+                    path = checkpoint()
+                    return {
+                        "success": False, "error": f"{exc} Checkpoint: {path}",
+                        "shot_details": shot_details, "cameras_placed": cameras_placed,
+                        "cameras_failed": cameras_failed,
+                    }
                         
                 except Exception as e:
                     cameras_failed.append({
@@ -339,6 +361,7 @@ def resume_camera_operator(
                     continue
                 
                 try:
+                    ensure_memory_budget("Camera resume")
                     print(f"\n--- Resuming camera: {camera_name} in {scene_name} ---")
                     print(f"  placement_success: {camera_instruction.get('placement_success')}")
                     print(f"  camera_parameters: {camera_instruction.get('camera_parameters')}")
@@ -363,6 +386,9 @@ def resume_camera_operator(
                         })
                         print(f"  ✗ Failed: {camera_name} - {result.get('error', 'Unknown error')}")
                         
+                except MemoryBudgetExceeded as exc:
+                    return {"success": False, "error": str(exc),
+                            "cameras_resumed": cameras_resumed, "cameras_failed": cameras_failed}
                 except Exception as e:
                     import traceback
                     traceback.print_exc()

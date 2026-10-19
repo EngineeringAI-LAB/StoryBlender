@@ -16,6 +16,7 @@ from typing import Optional, List
 import math
 import mathutils
 from ...blender_compat import action_fcurves
+from ...memory_budget import ensure_memory_budget
 from PIL import Image, ImageDraw
 from bpy_extras.object_utils import world_to_camera_view
 
@@ -404,6 +405,7 @@ def _capture_viewport_screenshot_with_outline(
     Returns:
     - Dictionary with success status and filepath or error
     """
+    ensure_memory_budget("Camera preview")
     # Generate filepath in temp directory
     temp_dir = tempfile.gettempdir()
     filepath = os.path.join(temp_dir, f"turnaround_{direction}.png")
@@ -2167,6 +2169,7 @@ def capture_camera_preview(
         - 'camera_name': Name of the camera used
         - 'error': Error message if failed (optional)
     """
+    ensure_memory_budget("Camera preview")
     try:
         # Step 1: Select focus objects for outline visibility
         selection_result = select_objects_for_outline(
