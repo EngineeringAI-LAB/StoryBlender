@@ -11,6 +11,21 @@
 </div>
 
 ---
+
+## Blender 5.2 LTS compatibility
+
+For **Blender 5.2 LTS**, use the
+**[`blender-5.2-lts` branch](https://github.com/EngineeringAI-LAB/StoryBlender/tree/blender-5.2-lts)**
+before packaging and installing the extension:
+
+```bash
+git fetch origin
+git switch blender-5.2-lts
+```
+
+**This version has been tested on macOS (Apple Silicon) only**, using
+**Blender 5.2.2 LTS**. Windows and Linux runtime testing is still pending.
+
 ## 📰 News
 [6/18/2026] StortBlender is accepted to ECCV 2026, see you in 🇸🇪!
 
@@ -55,11 +70,15 @@ StoryBlender/
 
 ### 1) Package the extension as a zip
 
-Run this command from the parent directory of `StoryBlender/`:
+After checking out `blender-5.2-lts`, run this command from the
+`StoryBlender/` repository directory:
 
 ```bash
-zip -r storyblender.zip StoryBlender
+git archive --format=zip --prefix=StoryBlender/ --output=../storyblender.zip HEAD
 ```
+
+This packages the latest commit, excluding local `.env` files and Git metadata.
+Commit any changes you want to include before building the zip.
 
 ### 2) Install in Blender
 
@@ -97,7 +116,7 @@ python src/download_wheels.py --check
 
 The downloader checks Python and ABI tags as well as platform tags. Old
 Python 3.11 binaries cannot satisfy a Python 3.13 dependency. The manifest is
-only refreshed after every supported platform passes validation.
+only refreshed after wheel validation passes for every target platform.
 
 ---
 
