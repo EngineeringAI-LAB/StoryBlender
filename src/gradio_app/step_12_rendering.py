@@ -137,7 +137,7 @@ def generate_python_render_script(
     
     if not render_jobs:
         return None, [], "No placed cameras found. Complete camera blocking before rendering."
-    
+
     # Export standalone sources: workers need no installed StoryBlender package.
     source_dir = Path(__file__).resolve().parent
     guard = (source_dir.parent / "memory_budget.py").read_text()

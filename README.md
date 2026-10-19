@@ -27,6 +27,12 @@ git switch blender-5.2-lts
 **Blender 5.2.2 LTS**. Windows and Linux runtime testing is still pending.
 
 ## 📰 News
+
+[10/19/2026] 🚀 **Major update: Blender 5.2 LTS beta support is here!**
+Try the [`blender-5.2-lts` branch](https://github.com/EngineeringAI-LAB/StoryBlender/tree/blender-5.2-lts),
+with end-to-end OpenRouter/Meshy pipeline testing, animation, and headless rendering.
+**Tested on macOS (Apple Silicon) only**; Windows and Linux runtime testing is pending.
+
 [6/18/2026] StortBlender is accepted to ECCV 2026, see you in 🇸🇪!
 
 ## ✨ Overview
